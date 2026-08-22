@@ -1,0 +1,9 @@
+{
+  "name": "shared-sms-store",
+  "version": "1.0.0",
+  "description": "Native module for reading Shared App Group UserDefaults for SMS",
+  "main": "index.js",
+  "peerDependencies": {
+    "react-native": "*"
+  }
+}

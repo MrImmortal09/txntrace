@@ -1,0 +1,10 @@
+{
+  "name": "txntrace-pdf-extractor",
+  "version": "1.0.0",
+  "description": "Local native module for PDF text extraction",
+  "main": "index.js",
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  }
+}
