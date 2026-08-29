@@ -54,14 +54,37 @@ def index(request: Request):
 def transactions_page(request: Request):
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM transactions ORDER BY date DESC").fetchall()
+        contacts = conn.execute("SELECT * FROM contacts ORDER BY name ASC").fetchall()
+        split_rows = conn.execute("SELECT * FROM splits").fetchall()
+        # Same "most recently used contact" ranking as the phone's split
+        # modal (app/src/components/SplitModal.tsx) — computed the same way,
+        # off actual past splits, so the picker feels consistent either side.
+        recency_rows = conn.execute(
+            """SELECT s.contact_id as contact_id, MAX(t.date) as last_used
+               FROM splits s JOIN transactions t ON t.id = s.transaction_id
+               GROUP BY s.contact_id"""
+        ).fetchall()
+
+    splits_by_txn: dict[str, list[dict]] = {}
+    for s in split_rows:
+        splits_by_txn.setdefault(s["transaction_id"], []).append(dict(s))
+
     transactions = []
     for r in rows:
         t = dict(r)
         style = bank_style_for(t.get("bank"))
         t["bank_color"] = style["color"]
         t["bank_logo"] = style["logo"]
+        t["splits"] = splits_by_txn.get(t["id"], [])
         transactions.append(t)
-    return templates.TemplateResponse(request, "transactions.html", {"transactions": transactions})
+
+    recency = {row["contact_id"]: row["last_used"] for row in recency_rows}
+
+    return templates.TemplateResponse(
+        request,
+        "transactions.html",
+        {"transactions": transactions, "contacts": [dict(c) for c in contacts], "recency": recency},
+    )
 
 
 @app.get("/cards", response_class=HTMLResponse)
@@ -143,6 +166,80 @@ def api_delete_card(card_id: str):
     if cur.rowcount == 0:
         raise HTTPException(status_code=404, detail="Card not found.")
     return {"deleted": True}
+
+
+@app.post("/api/contacts/sync")
+async def api_sync_contacts(payload: dict[str, Any]):
+    """Full-replace push from the phone — the only side with real device-
+    contact access, mirroring how /api/cards/export is a full replace in the
+    other direction. The web side never originates or edits a contact, so
+    there's nothing to reconcile: whatever the phone last pushed just is
+    the current list."""
+    contacts = payload.get("contacts") or []
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute("DELETE FROM contacts")
+        for c in contacts:
+            contact_id = c.get("id")
+            name = (c.get("name") or "").strip()
+            if not contact_id or not name:
+                continue
+            conn.execute(
+                "INSERT INTO contacts (id, name, created_at) VALUES (%s, %s, %s)",
+                (contact_id, name, now),
+            )
+    return {"count": len(contacts)}
+
+
+@app.get("/api/contacts")
+def api_list_contacts():
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM contacts ORDER BY name ASC").fetchall()
+    return {"contacts": [dict(r) for r in rows]}
+
+
+@app.post("/api/transactions/{txn_id}/splits")
+async def api_create_splits(txn_id: str, payload: dict[str, Any]):
+    """Create-once, like the phone's own split modal: a transaction is
+    split a single time, not repeatedly edited, so there's no update path
+    to keep in sync — only a 409 if it's already split."""
+    entries = payload.get("splits") or []
+    if not entries:
+        raise HTTPException(status_code=400, detail="No splits provided.")
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        txn = conn.execute("SELECT id FROM transactions WHERE id = %s", (txn_id,)).fetchone()
+        if not txn:
+            raise HTTPException(status_code=404, detail="Transaction not found.")
+        already = conn.execute(
+            "SELECT id FROM splits WHERE transaction_id = %s LIMIT 1", (txn_id,)
+        ).fetchone()
+        if already:
+            raise HTTPException(status_code=409, detail="This transaction is already split.")
+        created = []
+        for entry in entries:
+            split_id = f"split_{uuid.uuid4().hex[:20]}"
+            conn.execute(
+                """INSERT INTO splits (id, transaction_id, contact_id, contact_name, amount_owed, settled, created_at)
+                   VALUES (%s, %s, %s, %s, %s, 0, %s)""",
+                (split_id, txn_id, entry.get("contact_id"), entry.get("contact_name"), entry.get("amount_owed"), now),
+            )
+            created.append(split_id)
+    return {"created": created}
+
+
+@app.get("/api/splits/export")
+def api_export_splits(since: str | None = Query(default=None)):
+    """Pull-sync endpoint for the mobile app: splits created on the web,
+    keyed by created_at exactly like /api/transactions/export."""
+    with get_db() as conn:
+        if since:
+            rows = conn.execute(
+                "SELECT * FROM splits WHERE created_at > %s ORDER BY created_at ASC", (since,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM splits ORDER BY created_at ASC").fetchall()
+    return {"splits": [dict(r) for r in rows]}
 
 
 @app.post("/api/statements/parse")

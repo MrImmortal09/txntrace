@@ -15,14 +15,15 @@
         <th class="px-4 py-3">Bank</th>
         <th class="px-4 py-3">Source</th>
         <th class="px-4 py-3 text-right">Amount</th>
+        <th class="px-4 py-3">Split</th>
       </tr>
     </thead>
     <tbody class="divide-y divide-gray-100">
       {% for t in transactions %}
-      <tr class="cursor-pointer hover:bg-gray-50" onclick="openDetail('{{ t.id }}')">
-        <td class="px-4 py-3 whitespace-nowrap text-gray-600">{{ t.date[:10] if t.date else '—' }}</td>
-        <td class="px-4 py-3 text-gray-900">{{ t.merchant_raw or 'Unknown' }}</td>
-        <td class="px-4 py-3">
+      <tr class="hover:bg-gray-50">
+        <td class="cursor-pointer px-4 py-3 whitespace-nowrap text-gray-600" onclick="openDetail('{{ t.id }}')">{{ t.date[:10] if t.date else '—' }}</td>
+        <td class="cursor-pointer px-4 py-3 text-gray-900" onclick="openDetail('{{ t.id }}')">{{ t.merchant_raw or 'Unknown' }}</td>
+        <td class="cursor-pointer px-4 py-3" onclick="openDetail('{{ t.id }}')">
           <span class="inline-flex items-center gap-2 text-gray-600">
             {% if t.bank_logo %}
             <img src="{{ t.bank_logo }}" alt="" class="h-5 w-auto max-w-[60px] shrink-0 object-contain" />
@@ -33,9 +34,15 @@
             {{ t.bank or '—' }}
           </span>
         </td>
-        <td class="px-4 py-3 text-gray-500">{{ t.source or '—' }}</td>
-        <td class="px-4 py-3 text-right font-semibold {{ 'text-credit' if t.type == 'credit' else 'text-debit' }}">
+        <td class="cursor-pointer px-4 py-3 text-gray-500" onclick="openDetail('{{ t.id }}')">{{ t.source or '—' }}</td>
+        <td class="cursor-pointer px-4 py-3 text-right font-semibold {{ 'text-credit' if t.type == 'credit' else 'text-debit' }}" onclick="openDetail('{{ t.id }}')">
           {{ '+' if t.type == 'credit' else '-' }}₹{{ '%.2f' | format(t.amount or 0) }}
+        </td>
+        <td class="px-4 py-3">
+          <button onclick="openSplitModal('{{ t.id }}')"
+                  class="rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 hover:border-brand hover:text-brand">
+            {% if t.splits %}{{ t.splits | length }} split{{ 's' if t.splits | length != 1 else '' }}{% else %}Split{% endif %}
+          </button>
         </td>
       </tr>
       {% endfor %}
@@ -60,7 +67,23 @@
   </div>
 </div>
 
+<!-- Split modal — create mode (no existing splits) shows a searchable
+     contact picker; once a transaction is split it's shown read-only, the
+     same one-shot model as the phone's own split modal, which sidesteps
+     having to keep an edited split in sync both ways. -->
+<div id="split-overlay" class="fixed inset-0 z-20 hidden items-center justify-center bg-black/40 p-4" onclick="closeSplitModal(event)">
+  <div class="flex max-h-[85vh] w-full max-w-md flex-col rounded-2xl bg-white p-6 shadow-xl" onclick="event.stopPropagation()">
+    <div class="flex items-start justify-between">
+      <h3 class="text-lg font-bold text-gray-900">Split with contacts</h3>
+      <button onclick="closeSplitModal()" class="text-gray-400 hover:text-gray-600">✕</button>
+    </div>
+    <div id="split-body" class="mt-3 flex min-h-0 flex-1 flex-col"></div>
+  </div>
+</div>
+
 <script>const TRANSACTIONS = {{ transactions | tojson }};</script>
+<script>const CONTACTS = {{ contacts | tojson }};</script>
+<script>const CONTACT_RECENCY = {{ recency | tojson }};</script>
 <script>
   const FIELD_LABELS = {
     date: 'Date', bank: 'Bank', type: 'Type', category: 'Category', note: 'Note',
@@ -97,6 +120,143 @@
   function closeDetail(e) {
     document.getElementById('detail-overlay').classList.add('hidden');
     document.getElementById('detail-overlay').classList.remove('flex');
+  }
+
+  // --- Split modal ---
+  let splitTxnId = null;
+  let splitSelections = {}; // contact_id -> amount_owed
+
+  // Most-recently-split-with contacts first — same ranking the phone's own
+  // split modal uses (app/src/components/SplitModal.tsx), computed off the
+  // same underlying data, so the two don't feel like different features.
+  function sortedContacts() {
+    return [...CONTACTS].sort((a, b) => {
+      const aUsed = CONTACT_RECENCY[a.id];
+      const bUsed = CONTACT_RECENCY[b.id];
+      if (aUsed && bUsed) return bUsed.localeCompare(aUsed);
+      if (aUsed) return -1;
+      if (bUsed) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  function openSplitModal(txnId) {
+    const txn = TRANSACTIONS.find((t) => t.id === txnId);
+    if (!txn) return;
+    splitTxnId = txnId;
+
+    if (txn.splits && txn.splits.length > 0) {
+      renderSplitSummary(txn);
+    } else {
+      splitSelections = {};
+      renderSplitPicker(txn);
+    }
+
+    document.getElementById('split-overlay').classList.remove('hidden');
+    document.getElementById('split-overlay').classList.add('flex');
+  }
+
+  function closeSplitModal(e) {
+    document.getElementById('split-overlay').classList.add('hidden');
+    document.getElementById('split-overlay').classList.remove('flex');
+  }
+
+  function renderSplitSummary(txn) {
+    const rows = txn.splits.map((s) => `
+      <div class="flex items-center justify-between border-b border-gray-100 py-2 text-sm last:border-0">
+        <span class="text-gray-700">${s.contact_name || 'Unknown'}</span>
+        <span class="font-medium text-gray-900">₹${Number(s.amount_owed || 0).toFixed(2)}</span>
+      </div>`).join('');
+    document.getElementById('split-body').innerHTML = `
+      <p class="text-sm text-gray-500">Already split — divided only among the people below, not you.</p>
+      <div class="mt-3">${rows}</div>`;
+  }
+
+  function renderSplitPicker(txn) {
+    document.getElementById('split-body').innerHTML = `
+      <p class="text-sm text-gray-500">Total ₹${Number(txn.amount || 0).toFixed(2)} — divided only among who you select below, not you.</p>
+      <input id="split-search" type="text" placeholder="Search contacts"
+             class="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+             oninput="renderSplitContactList()" />
+      <div id="split-contact-list" class="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto"></div>
+      ${CONTACTS.length === 0 ? `
+      <p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+        No contacts yet — open TxnTrace on your phone and tap "Sync from Web" in Settings to push your contacts here.
+      </p>` : ''}
+      <button onclick="saveSplit()" class="mt-4 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-600" id="split-save-btn">
+        Save split
+      </button>`;
+    renderSplitContactList();
+  }
+
+  function toggleSplitContact(id) {
+    const txn = TRANSACTIONS.find((t) => t.id === splitTxnId);
+    if (id in splitSelections) {
+      delete splitSelections[id];
+    } else {
+      splitSelections[id] = 0;
+    }
+    const ids = Object.keys(splitSelections);
+    if (ids.length > 0) {
+      const each = Number((txn.amount / ids.length).toFixed(2));
+      ids.forEach((cid) => { splitSelections[cid] = each; });
+    }
+    renderSplitContactList();
+  }
+
+  function setSplitAmount(id, value) {
+    splitSelections[id] = Number(value) || 0;
+  }
+
+  function renderSplitContactList() {
+    const searchEl = document.getElementById('split-search');
+    const query = (searchEl ? searchEl.value : '').trim().toLowerCase();
+    const list = document.getElementById('split-contact-list');
+    const filtered = sortedContacts().filter((c) => !query || c.name.toLowerCase().includes(query));
+
+    list.innerHTML = filtered.map((c) => {
+      const selected = c.id in splitSelections;
+      const recent = !!CONTACT_RECENCY[c.id];
+      return `
+        <div class="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-gray-50">
+          <label class="flex flex-1 cursor-pointer items-center gap-3">
+            <input type="checkbox" ${selected ? 'checked' : ''} onchange="toggleSplitContact('${c.id}')"
+                   class="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand" />
+            <span class="text-sm text-gray-900">${c.name}</span>
+            ${recent && !selected ? '<span class="text-xs text-gray-400">recent</span>' : ''}
+          </label>
+          ${selected ? `<input type="number" step="0.01" value="${splitSelections[c.id]}"
+              onchange="setSplitAmount('${c.id}', this.value)"
+              class="w-20 rounded border border-gray-200 px-2 py-1 text-right text-sm focus:border-brand focus:outline-none" />` : ''}
+        </div>`;
+    }).join('') || '<p class="py-6 text-center text-sm text-gray-400">No contacts found.</p>';
+  }
+
+  async function saveSplit() {
+    const ids = Object.keys(splitSelections);
+    if (ids.length === 0) return;
+    const btn = document.getElementById('split-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      const splits = ids.map((id) => ({
+        contact_id: id,
+        contact_name: (CONTACTS.find((c) => c.id === id) || {}).name || '',
+        amount_owed: splitSelections[id],
+      }));
+      const res = await fetch(`/api/transactions/${splitTxnId}/splits`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ splits }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to save split.');
+      location.reload();
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+      btn.textContent = 'Save split';
+    }
   }
 </script>
 {% endblock %}

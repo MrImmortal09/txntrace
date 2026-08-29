@@ -53,6 +53,37 @@ CREATE TABLE IF NOT EXISTS cards (
 );
 """
 
+# The phone is the only side with real device-contact access, so contacts
+# are authored there and pushed up (the reverse of cards, which are
+# web-authored and pulled down) — the web side never edits a contact, it's
+# a read-only mirror used to populate its own split picker. Deliberately no
+# phone-number column: nothing here needs it, and it's PII this app doesn't
+# otherwise send off-device.
+CONTACTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS contacts (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    created_at TEXT
+);
+"""
+
+# Mirrors the mobile app's `splits` table (app/src/db/schema.ts) column for
+# column, plus one addition: created_at, needed only so the phone can pull
+# down what's new since its last sync instead of the whole table — the
+# phone's own INSERT names its columns explicitly, so the extra field is
+# simply ignored on that side.
+SPLITS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS splits (
+    id TEXT PRIMARY KEY,
+    transaction_id TEXT,
+    contact_id TEXT,
+    contact_name TEXT,
+    amount_owed REAL,
+    settled INTEGER DEFAULT 0,
+    created_at TEXT
+);
+"""
+
 
 @contextmanager
 def get_db():
@@ -73,3 +104,5 @@ def init_db() -> None:
     with get_db() as conn:
         conn.execute(SCHEMA)
         conn.execute(CARDS_SCHEMA)
+        conn.execute(CONTACTS_SCHEMA)
+        conn.execute(SPLITS_SCHEMA)

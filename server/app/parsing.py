@@ -300,19 +300,26 @@ LINE_DATE_RE = re.compile(
     r"\b(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{1,2}[/\-][A-Za-z]{3,9}[/\-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4})\b"
 )
 LINE_AMOUNT_RE = re.compile(r"[\d,]+\.\d{2}")
-TRAILING_CODE_RE = re.compile(r"\b(C|D|Cr|Dr)\.?\s*$")
+# A foreign-currency code sitting directly in front of its own decimal amount
+# (e.g. "JPY    2000.00", "USD    23.60") — a real credit-card statement
+# prints this *alongside* the already-INR-converted charge later on the same
+# line, so a line matching this has two amounts where the first is the
+# foreign figure to ignore, not the transaction amount — the opposite of an
+# account-statement line, where a second number is a running balance.
+FOREX_AMOUNT_RE = re.compile(r"\b[A-Z]{3}\b\s+[\d,]+\.\d{2}\b")
 
 
 def _line_direction(line: str, amount_str: str) -> str:
     """Layered because real formats disagree on how direction is marked:
-    SBI trails the amount with a standalone C/D code; an HDFC card statement
-    instead prefixes the amount with "+" for credits and nothing for debits;
-    only as a last resort does a plain "cr"/"dr" substring get trusted, since
-    that's prone to false-positives against ordinary description text.
+    SBI trails the amount with a standalone C/D code, an IDFC card statement
+    trails it with a full "DR"/"CR" word, an HDFC card statement instead
+    prefixes the amount with "+" for credits and nothing for debits; only as
+    a last resort does a plain "cr"/"dr" substring get trusted, since that's
+    prone to false-positives against ordinary description text.
     """
-    trailing = TRAILING_CODE_RE.search(line)
-    if trailing:
-        return "credit" if trailing.group(1).upper().startswith("C") else "debit"
+    embedded = _embedded_direction(line)
+    if embedded:
+        return embedded
 
     amount_pos = line.rfind(amount_str)
     if amount_pos > 0 and line[:amount_pos].rstrip().endswith("+"):
@@ -322,6 +329,22 @@ def _line_direction(line: str, amount_str: str) -> str:
     if "cr" in lower_line and "dr" not in lower_line:
         return "credit"
     return "debit"
+
+
+def _clean_pdf_description(text: str, date_match: "re.Match[str] | None", amount_matches: list[str]) -> str | None:
+    """Strips the parts of the raw text that are already captured as
+    structured fields (date, amount(s), a trailing Dr/Cr word, a forex
+    currency code) so what's left is the merchant name alone, not e.g.
+    "Bengaluru UKA Convert 9,935.00 DR"."""
+    description = text
+    if date_match:
+        description = description.replace(date_match.group(1), "")
+    for amt in amount_matches:
+        description = description.replace(amt, "")
+    description = EMBEDDED_DRCR_RE.sub("", description)
+    description = re.sub(r"\b[A-Z]{3}\b\s*$", "", description.strip())
+    description = re.sub(r"\s{2,}", " ", description).strip(" ,-")
+    return description or None
 
 
 def parse_pdf(raw_bytes: bytes) -> list[dict[str, Any]]:
@@ -339,40 +362,59 @@ def parse_pdf(raw_bytes: bytes) -> list[dict[str, Any]]:
             # heuristic. A line needs a decimal amount to count; a line with
             # no date of its own (e.g. a tax/fee line directly under a dated
             # transaction) inherits the most recently seen date rather than
-            # being dropped, since real statements do this often.
+            # being dropped, since real statements do this often — so the
+            # date scan runs on *every* line regardless of whether that same
+            # line has an amount, or a date-only line (the first half of a
+            # merchant name wrapped onto two lines) would never get the
+            # chance to update it before the amount-bearing line right after
+            # needs it. That same wrap also means a dateless, amountless
+            # line right before an amount line is itself the merchant name's
+            # continuation, not noise — held in pending_prefix and prepended
+            # once the amount line completes the row.
             text = page.extract_text() or ""
             last_date_iso: str | None = None
+            pending_prefix = ""
             for line in text.splitlines():
+                date_match = LINE_DATE_RE.search(line)
+                if date_match:
+                    parsed = _parse_date(date_match.group(1))
+                    if parsed:
+                        last_date_iso = parsed
+
                 amount_matches = LINE_AMOUNT_RE.findall(line)
                 if not amount_matches:
+                    if date_match:
+                        pending_prefix = line.replace(date_match.group(1), "").strip()
+                    elif pending_prefix:
+                        pending_prefix = f"{pending_prefix} {line.strip()}".strip()
+                    continue
+                if not last_date_iso:
                     continue
 
-                date_match = LINE_DATE_RE.search(line)
-                date_iso = _parse_date(date_match.group(1)) if date_match else None
-                if date_iso:
-                    last_date_iso = date_iso
-                elif last_date_iso:
-                    date_iso = last_date_iso
+                combined_text = f"{pending_prefix} {line}".strip() if pending_prefix else line
+                pending_prefix = ""
+
+                is_forex_line = len(amount_matches) > 1 and bool(FOREX_AMOUNT_RE.search(line))
+                if len(amount_matches) > 1 and not is_forex_line:
+                    amount_str = amount_matches[0]
+                    balance = _parse_amount(amount_matches[-1])
                 else:
-                    continue
-
-                amount = _parse_amount(amount_matches[0])
+                    # Single amount, or a forex line where the real charge is
+                    # always the last figure on the line.
+                    amount_str = amount_matches[-1]
+                    balance = None
+                amount = _parse_amount(amount_str)
                 if amount is None:
                     continue
 
-                description = line
-                if date_match:
-                    description = description.replace(date_match.group(1), "")
-                description = description.strip()
-
                 results.append(
                     {
-                        "date": date_iso,
-                        "merchant": description or None,
+                        "date": last_date_iso,
+                        "merchant": _clean_pdf_description(combined_text, date_match, amount_matches),
                         "amount": amount,
-                        "type": _line_direction(line, amount_matches[0]),
-                        "balance": _parse_amount(amount_matches[-1]) if len(amount_matches) > 1 else None,
-                        "raw": {"line": line},
+                        "type": _line_direction(combined_text, amount_str),
+                        "balance": balance,
+                        "raw": {"line": combined_text},
                     }
                 )
     return results
