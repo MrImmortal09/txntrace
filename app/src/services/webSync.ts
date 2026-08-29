@@ -1,10 +1,23 @@
+import { SERVER_URL as SERVER_URL_DEFAULT } from '@env';
 import { db } from '../db/schema';
 import { getSetting, setSetting } from './appSettings';
 
 const SERVER_URL_KEY = 'web_sync_server_url';
 const LAST_SYNC_KEY = 'web_sync_last_created_at';
 
-export const getServerUrl = () => getSetting(SERVER_URL_KEY);
+/**
+ * An explicit choice made via Settings always wins — a build-time default
+ * shouldn't silently override something the user deliberately changed. It's
+ * only consulted (not persisted) when nothing has been set yet, so bumping
+ * SERVER_URL in .env and rebuilding still takes effect for anyone who never
+ * touched the field.
+ */
+export const getServerUrl = async (): Promise<string | null> => {
+  const stored = await getSetting(SERVER_URL_KEY);
+  if (stored) return stored;
+  return SERVER_URL_DEFAULT ? SERVER_URL_DEFAULT.replace(/\/+$/, '') : null;
+};
+
 export const setServerUrl = (url: string) => setSetting(SERVER_URL_KEY, url.replace(/\/+$/, ''));
 
 interface RemoteTransaction {
