@@ -1,9 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Linking, Platform, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import Contacts from 'react-native-contacts';
 import SharedSMSStore from 'shared-sms-store';
 import { db } from '../db/schema';
-import { getServerUrl, setServerUrl, syncFromServer, syncCardsFromServer } from '../services/webSync';
+import {
+  getServerUrl,
+  setServerUrl,
+  syncFromServer,
+  syncCardsFromServer,
+  syncContactsToServer,
+  syncSplitsFromServer,
+} from '../services/webSync';
 import { useTheme } from '../theme/ThemeProvider';
 
 const SettingsScreen = () => {
@@ -114,7 +122,28 @@ const SettingsScreen = () => {
       await setServerUrl(serverUrl.trim());
       const { imported } = await syncFromServer();
       const { count } = await syncCardsFromServer();
-      log(`Synced from web ✅ — ${imported} new transaction(s), ${count} card(s)/account(s).`);
+
+      // Contacts only push one way (phone -> server), and only if contacts
+      // permission is actually granted — the web side just won't have a
+      // contact list to split against until it is, everything else still syncs.
+      let contactsMsg = '';
+      try {
+        const permission = await Contacts.requestPermission();
+        if (permission === 'authorized') {
+          const all = await Contacts.getAll();
+          const payload = all.map(c => ({
+            id: c.recordID,
+            name: c.displayName || `${c.givenName} ${c.familyName}`.trim(),
+          }));
+          const { count: contactCount } = await syncContactsToServer(payload);
+          contactsMsg = `, ${contactCount} contact(s) pushed`;
+        }
+      } catch (e: any) {
+        log(`Contact push skipped: ${e.message}`);
+      }
+
+      const { imported: splitsImported } = await syncSplitsFromServer();
+      log(`Synced from web ✅ — ${imported} new transaction(s), ${count} card(s)/account(s)${contactsMsg}, ${splitsImported} new split(s).`);
     } catch (e: any) {
       log(`Sync FAILED ❌: ${e.message}`);
     } finally {
@@ -195,7 +224,7 @@ const SettingsScreen = () => {
 
       <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>3. Sync from web</Text>
-        <Text style={[styles.hint, { color: colors.textSecondary }]}>Pulls in statements you've imported and sorted on the web app</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>Pulls in statements and splits from the web app, and pushes your contacts up so you can split with them there too</Text>
         <TextInput
           style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
           placeholder="http://192.168.1.10:8000"
