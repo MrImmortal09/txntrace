@@ -1,0 +1,6 @@
+# Real bank/card statements dropped at the repo root for parser tuning.
+# These carry full PII (name, address, account numbers) — never commit them.
+/*.csv
+/*.xls
+/*.xlsx
+/*.pdf

@@ -48,7 +48,7 @@ function App() {
       }
     } catch (error: any) {
       console.error('Error reading SMS store:', error);
-      setSmsError('Message Filter not configured. Please enable TxnTraceSMSFilter in Settings.');
+      setSmsError('Could not read incoming messages. Check SMS setup in Settings.');
     }
   };
 

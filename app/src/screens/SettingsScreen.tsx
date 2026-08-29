@@ -1,10 +1,23 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking, Platform, ScrollView } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Linking, Platform, ScrollView } from 'react-native';
 import SharedSMSStore from 'shared-sms-store';
 import { db } from '../db/schema';
+import { getServerUrl, setServerUrl, syncFromServer, syncCardsFromServer } from '../services/webSync';
 
 const SettingsScreen = () => {
   const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [serverUrl, setServerUrlInput] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    getServerUrl().then(url => { if (url) setServerUrlInput(url); });
+  }, []);
+
+  const openShortcuts = () => {
+    Linking.openURL('shortcuts://').catch(() => {
+      Linking.openURL('https://apps.apple.com/app/shortcuts/id915249334').catch(() => {});
+    });
+  };
 
   const openMessagesSettings = () => {
     if (Platform.OS === 'ios') {
@@ -38,12 +51,19 @@ const SettingsScreen = () => {
       log(`App Group FAILED ❌: ${e.message}`);
     }
 
-    // Step 3: Check if extension has ever run
+    // Step 3: Per-path ingestion health
     try {
-      const lastRun = await (SharedSMSStore as any).getExtensionLastRun();
-      log(`Extension last ran: ${lastRun}`);
+      const stats = await (SharedSMSStore as any).getIngestStats();
+      log(`Shortcut last ran: ${stats.shortcutLastRun}`);
+      log(`Pending from Shortcut: ${stats.pendingFromShortcut}`);
+      log(`Extension last ran: ${stats.extensionLastRun}`);
+      log(`Pending from Extension: ${stats.pendingFromExtension}`);
+      log(`Inbox file exists: ${stats.inboxExists ? 'yes ✅' : 'no'}`);
+      if (stats.shortcutLastRun === 'never') {
+        log('→ Automation has never fired. Check the Shortcuts setup above.');
+      }
     } catch (e: any) {
-      log(`getExtensionLastRun FAILED: ${e.message}`);
+      log(`getIngestStats FAILED: ${e.message}`);
     }
 
     // Step 4: Peek at messages WITHOUT clearing them
@@ -57,7 +77,7 @@ const SettingsScreen = () => {
 
     // Step 5: Check DB
     try {
-      const res = await db.executeAsync('SELECT COUNT(*) as count FROM transactions');
+      const res = await db.execute('SELECT COUNT(*) as count FROM transactions');
       const rows: any = res.rows;
       const arr = rows?._array || rows || [];
       log(`Transactions in DB: ${arr[0]?.count ?? 'unknown'}`);
@@ -68,9 +88,27 @@ const SettingsScreen = () => {
     log('--- Diagnostics done ---');
   };
 
+  const handleSync = async () => {
+    if (!serverUrl.trim()) {
+      log('Enter your server URL first (e.g. http://192.168.1.10:8000).');
+      return;
+    }
+    setSyncing(true);
+    try {
+      await setServerUrl(serverUrl.trim());
+      const { imported } = await syncFromServer();
+      const { count } = await syncCardsFromServer();
+      log(`Synced from web ✅ — ${imported} new transaction(s), ${count} card(s)/account(s).`);
+    } catch (e: any) {
+      log(`Sync FAILED ❌: ${e.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const clearDb = async () => {
     try {
-      await db.executeAsync('DELETE FROM transactions');
+      await db.execute('DELETE FROM transactions');
       log('DB cleared ✅');
     } catch (e: any) {
       log(`Clear DB FAILED: ${e.message}`);
@@ -81,8 +119,40 @@ const SettingsScreen = () => {
     <ScrollView style={styles.container}>
       <Text style={styles.title}>SMS Tracking</Text>
       <View style={styles.card}>
+        <Text style={styles.sectionTitle}>1. Shortcuts automation</Text>
+        <Text style={styles.hint}>The main way TxnTrace sees your bank SMS</Text>
         <Text style={styles.description}>
-          To automatically track transactions from your bank via SMS, you need to enable the TxnTrace filter extension in your device settings.
+          iOS has no API for reading messages, so you hand them to TxnTrace with a
+          one-time automation. It runs in the background — nothing opens, nothing
+          is sent anywhere.
+        </Text>
+
+        <Text style={styles.instructions}>
+          1. Open Shortcuts → Automation tab{'\n'}
+          2. Tap + → Message{'\n'}
+          3. Leave Sender and Message empty to catch every bank{'\n'}
+          4. Turn on Run Immediately, turn off Notify When Run{'\n'}
+          5. New Blank Automation → add action “Save Transaction SMS”{'\n'}
+          6. Set its Message field to the Shortcut Input variable
+        </Text>
+
+        <Text style={styles.warn}>
+          Only messages received after setup are captured — there is no way to
+          import your SMS history.
+        </Text>
+
+        <TouchableOpacity style={styles.button} onPress={openShortcuts}>
+          <Text style={styles.buttonText}>Open Shortcuts</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.card, { marginTop: 16 }]}>
+        <Text style={styles.sectionTitle}>2. Message filter (backup)</Text>
+        <Text style={styles.hint}>Optional — kept for the upcoming server-side path</Text>
+        <Text style={styles.description}>
+          The filter extension sits in the message delivery path, so it misses less
+          than an automation. It cannot store anything on-device yet, so leave this
+          off unless you are helping test.
         </Text>
 
         <Text style={styles.instructions}>
@@ -92,8 +162,24 @@ const SettingsScreen = () => {
           4. Enable TxnTraceSMSFilter under SMS Filtering
         </Text>
 
-        <TouchableOpacity style={styles.button} onPress={openMessagesSettings}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: '#8e8e93' }]} onPress={openMessagesSettings}>
           <Text style={styles.buttonText}>Open Messages Settings</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.card, { marginTop: 16 }]}>
+        <Text style={styles.sectionTitle}>3. Sync from web</Text>
+        <Text style={styles.hint}>Pulls in statements you've imported and sorted on the web app</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="http://192.168.1.10:8000"
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={serverUrl}
+          onChangeText={setServerUrlInput}
+        />
+        <TouchableOpacity style={styles.button} onPress={handleSync} disabled={syncing}>
+          <Text style={styles.buttonText}>{syncing ? 'Syncing…' : 'Sync from Web'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -142,6 +228,15 @@ const styles = StyleSheet.create({
     color: '#888',
     marginBottom: 14,
   },
+  warn: {
+    fontSize: 13,
+    color: '#8a6d3b',
+    backgroundColor: '#fcf8e3',
+    padding: 10,
+    borderRadius: 6,
+    lineHeight: 19,
+    marginBottom: 16,
+  },
   card: {
     backgroundColor: 'white',
     borderRadius: 8,
@@ -157,6 +252,15 @@ const styles = StyleSheet.create({
     color: '#444',
     lineHeight: 22,
     marginBottom: 16,
+  },
+  input: {
+    backgroundColor: '#f9f9f9',
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 15,
+    marginBottom: 12,
   },
   instructions: {
     fontSize: 14,

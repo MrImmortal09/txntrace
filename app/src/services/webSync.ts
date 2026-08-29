@@ -1,0 +1,117 @@
+import { db } from '../db/schema';
+import { getSetting, setSetting } from './appSettings';
+
+const SERVER_URL_KEY = 'web_sync_server_url';
+const LAST_SYNC_KEY = 'web_sync_last_created_at';
+
+export const getServerUrl = () => getSetting(SERVER_URL_KEY);
+export const setServerUrl = (url: string) => setSetting(SERVER_URL_KEY, url.replace(/\/+$/, ''));
+
+interface RemoteTransaction {
+  id: string;
+  bank: string | null;
+  amount: number;
+  type: string;
+  merchant_raw: string | null;
+  date: string;
+  source: string | null;
+  category: string | null;
+  note: string | null;
+  reviewed: number;
+  created_at: string;
+  reference: string | null;
+  account_last4: string | null;
+  balance: number | null;
+  sender: string | null;
+  sms_body: string | null;
+}
+
+/**
+ * Pulls whatever the server hasn't handed us yet, keyed by created_at rather
+ * than re-fetching everything each time — the server can accumulate a lot of
+ * statement history, and INSERT OR IGNORE alone would still mean re-sending
+ * the whole table over the network on every sync.
+ */
+export const syncFromServer = async (): Promise<{ imported: number }> => {
+  const baseUrl = await getServerUrl();
+  if (!baseUrl) throw new Error('No server URL configured.');
+
+  const since = await getSetting(LAST_SYNC_KEY);
+  const url = `${baseUrl}/api/transactions/export${since ? `?since=${encodeURIComponent(since)}` : ''}`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+  const data = await res.json();
+  const remote: RemoteTransaction[] = data.transactions || [];
+
+  let imported = 0;
+  let latestCreatedAt = since;
+
+  for (const txn of remote) {
+    const result = await db.execute(
+      `INSERT OR IGNORE INTO transactions
+        (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, reference, account_last4, balance, sender, sms_body)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        txn.id,
+        txn.bank,
+        txn.amount,
+        txn.type,
+        txn.merchant_raw,
+        txn.date,
+        txn.source,
+        txn.category,
+        txn.note,
+        txn.reviewed,
+        txn.created_at,
+        txn.reference,
+        txn.account_last4,
+        txn.balance,
+        txn.sender,
+        txn.sms_body,
+      ]
+    );
+    imported += result.rowsAffected;
+    if (!latestCreatedAt || txn.created_at > latestCreatedAt) latestCreatedAt = txn.created_at;
+  }
+
+  if (latestCreatedAt) await setSetting(LAST_SYNC_KEY, latestCreatedAt);
+  return { imported };
+};
+
+interface RemoteCard {
+  id: string;
+  name: string;
+  bank: string | null;
+  last4: string | null;
+  credit_limit: number | null;
+  is_credit_card: number;
+  custom_pattern: string | null;
+  created_at: string;
+}
+
+/**
+ * Full replace, not a delta sync — the registry is small (a handful of cards,
+ * not a growing transaction history) and an edit on the web app (renamed
+ * card, changed limit) should take effect on the next sync rather than
+ * waiting on a "since" cursor that only makes sense for append-only data.
+ */
+export const syncCardsFromServer = async (): Promise<{ count: number }> => {
+  const baseUrl = await getServerUrl();
+  if (!baseUrl) throw new Error('No server URL configured.');
+
+  const res = await fetch(`${baseUrl}/api/cards/export`);
+  if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+  const data = await res.json();
+  const remote: RemoteCard[] = data.cards || [];
+
+  await db.execute('DELETE FROM cards');
+  for (const card of remote) {
+    await db.execute(
+      `INSERT INTO cards (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [card.id, card.name, card.bank, card.last4, card.credit_limit, card.is_credit_card, card.custom_pattern, card.created_at]
+    );
+  }
+  return { count: remote.length };
+};

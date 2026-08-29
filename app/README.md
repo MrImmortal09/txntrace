@@ -73,6 +73,34 @@ When you want to forcefully reload, for example to reset the state of your app, 
 - **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
 - **iOS**: Press <kbd>R</kbd> in iOS Simulator.
 
+## Standalone install on your iPhone (no laptop needed afterward)
+
+The steps above run a **Debug** build, which fetches its JavaScript from Metro on your Mac at runtime — it stops working the moment you disconnect or Metro isn't reachable. A **Release** build bundles the JS directly into the app package instead, so once it's installed the app runs entirely on the phone: no Mac, no Wi-Fi, no cable.
+
+1. Find your iPhone's UDID (only needed once, unless you use a different device):
+   ```sh
+   xcrun xctrace list devices
+   ```
+   Look for your iPhone under "Devices" — the ID in parentheses is the UDID.
+
+2. From the `app/` directory, build, sign, install, and launch a Release build in one step:
+   ```sh
+   npx react-native run-ios --udid <YOUR_DEVICE_UDID> --mode Release
+   ```
+   This does not need Metro running.
+
+3. **First install only** — trust the developer certificate on the phone: **Settings → General → VPN & Device Management → tap your Apple ID entry under "Developer App" → Trust**. Without this the app installs but refuses to open.
+
+4. Launch TxnTrace from the Home Screen. From now on it runs standalone.
+
+### Re-installing after code changes
+
+Re-run the command from step 2 whenever you want the phone to pick up new code. It rebuilds, re-signs, and reinstalls in place — your local SQLite data (transactions, SMS logs) is preserved across reinstalls as long as you keep using the same signing identity, which happens automatically.
+
+### Important: 7-day expiry on a free Apple ID
+
+This project is signed with a free personal Apple Developer account (no $99/year enrollment). Apple limits apps built this way to a provisioning profile that **expires after 7 days** — after that the app refuses to launch until you repeat step 2 (no code changes required, just rebuild and reinstall). A paid Apple Developer Program membership removes this limit for about a year per build; there's no way around it on a free account.
+
 ## Congratulations! :tada:
 
 You've successfully run and modified your React Native App. :partying_face:

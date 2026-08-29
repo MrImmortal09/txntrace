@@ -61,3 +61,19 @@ export const isCreditTransaction = (message: string): boolean => {
   const lowerMsg = message.toLowerCase();
   return lowerMsg.includes('credited') || lowerMsg.includes('deposited') || lowerMsg.includes('received') || lowerMsg.includes('added');
 };
+
+/**
+ * Extracts the bank's own transaction reference (UPI ref / RRN), when present.
+ *
+ * Some banks send two SMS for one real transaction — e.g. IndusInd sends both a
+ * generic debit alert and a UPI-specific one, worded completely differently but
+ * sharing the same reference number. A dedupe key built from sender+body (see
+ * contentKey in index.ts) treats those as two different transactions; this lets
+ * callers key on the reference instead, when one is present.
+ *
+ * Matches "UPI:660719831342", "RRN:660730856024", and "Ref-UPI/660730856024/...".
+ */
+export const extractReference = (message: string): string | null => {
+  const match = message.match(/(?:UPI|RRN)[:\-/]?\s*(\d{9,})/i);
+  return match ? match[1] : null;
+};

@@ -80,7 +80,7 @@ const StatementsScreen = () => {
       // Example DB insertion, assuming db is available and setupDatabase was called
       // In a real app we'd batch these properly
       for (const txn of previewData) {
-        await db.executeAsync(
+        await db.execute(
           `INSERT OR IGNORE INTO transactions 
             (id, bank, amount, type, merchant_raw, date, source, currency) 
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

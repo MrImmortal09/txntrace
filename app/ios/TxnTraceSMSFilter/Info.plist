@@ -5,12 +5,13 @@
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>
-		<dict>
-		</dict>
+		<dict/>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.identitylookup.message-filter</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).MessageFilterExtension</string>
 	</dict>
+	<key>RCTNewArchEnabled</key>
+	<true/>
 </dict>
 </plist>

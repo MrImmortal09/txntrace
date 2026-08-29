@@ -17,7 +17,7 @@ const HomeScreen = () => {
   const loadDashboardData = async () => {
     try {
       // Owed to you
-      const splitRes = await db.executeAsync('SELECT SUM(amount_owed) as total FROM splits WHERE settled = 0');
+      const splitRes = await db.execute('SELECT SUM(amount_owed) as total FROM splits WHERE settled = 0');
       const splitRows: any = splitRes.rows;
       const splitArray = splitRows?._array || splitRows || [];
       const totalOwed = splitArray[0]?.total || 0;
@@ -28,7 +28,7 @@ const HomeScreen = () => {
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       const isoDateStr = sevenDaysAgo.toISOString();
 
-      const spendRes = await db.executeAsync(
+      const spendRes = await db.execute(
         `SELECT category, SUM(amount) as total 
          FROM transactions 
          WHERE type = 'debit' AND date >= ? 

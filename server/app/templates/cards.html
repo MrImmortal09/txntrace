@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Cards · TxnTrace{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-bold text-gray-900">Cards & Accounts</h1>
+<p class="mt-1 text-sm text-gray-500">
+  Name each card/account and give it a last-4 digit so incoming transactions get matched to it automatically —
+  e.g. a message containing <code class="rounded bg-gray-100 px-1.5 py-0.5 text-xs">xx4230</code> is matched to
+  whichever card here has last-4 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-xs">4230</code>.
+</p>
+
+<div class="mt-8 rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+  <h2 class="text-lg font-semibold text-gray-900">Add a card or account</h2>
+  <div class="mt-5 grid gap-5 sm:grid-cols-2">
+    <div>
+      <label class="block text-sm font-medium text-gray-700">Name</label>
+      <input id="new-name" type="text" placeholder="e.g. HDFC Regalia"
+             class="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand" />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700">Bank</label>
+      <select id="new-bank" class="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+        {% for b in banks %}
+        <option value="{{ b.id }}">{{ b.name }}</option>
+        {% endfor %}
+        <option value="{{ fallback_bank.id }}">Other</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700">Type</label>
+      <select id="new-type" class="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+        <option value="true">Credit Card</option>
+        <option value="false">Bank Account</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700">Last 4 digits</label>
+      <input id="new-last4" type="text" maxlength="6" placeholder="4230"
+             class="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand" />
+    </div>
+    <div id="new-limit-wrap">
+      <label class="block text-sm font-medium text-gray-700">Credit limit (₹)</label>
+      <input id="new-limit" type="number" placeholder="100000"
+             class="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand" />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700">
+        Custom match pattern <span class="font-normal text-gray-400">(optional, advanced)</span>
+      </label>
+      <input id="new-pattern" type="text" placeholder="only needed if last-4 alone is ambiguous"
+             class="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand" />
+    </div>
+  </div>
+
+  <button id="add-btn" class="mt-6 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-600">
+    Add
+  </button>
+  <p id="add-error" class="mt-3 hidden text-sm text-debit"></p>
+</div>
+
+<div class="mt-8 space-y-3" id="card-list">
+  {% for c in cards %}
+  {% set style = (banks | selectattr('id', 'equalto', c.bank) | list | first) or fallback_bank %}
+  <div class="flex items-center gap-4 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm" data-id="{{ c.id }}">
+    {% if style.logo %}
+    <div class="flex h-11 w-16 shrink-0 items-center justify-center rounded-lg bg-gray-50 p-1.5">
+      <img src="{{ style.logo }}" alt="" class="max-h-full max-w-full object-contain" />
+    </div>
+    {% else %}
+    <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+         style="background-color: {{ style.color }}">
+      {{ style.code }}
+    </div>
+    {% endif %}
+    <div class="flex-1">
+      <div class="font-semibold text-gray-900">{{ c.name }}</div>
+      <div class="text-xs text-gray-500">
+        {{ style.name }} · {{ 'Credit Card' if c.is_credit_card else 'Account' }}
+        {% if c.last4 %} · ends {{ c.last4 }}{% endif %}
+      </div>
+    </div>
+    {% if c.is_credit_card and c.credit_limit %}
+    <div class="text-right text-sm text-gray-600">Limit ₹{{ '{:,.0f}'.format(c.credit_limit) }}</div>
+    {% endif %}
+    <button class="delete-card text-xs font-medium text-gray-400 hover:text-debit" data-id="{{ c.id }}">Delete</button>
+  </div>
+  {% else %}
+  <div class="rounded-2xl border border-dashed border-gray-300 py-12 text-center text-gray-500">
+    No cards or accounts yet — add one above.
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+  const NEW_TYPE = document.getElementById('new-type');
+  const NEW_LIMIT_WRAP = document.getElementById('new-limit-wrap');
+  NEW_TYPE.addEventListener('change', () => {
+    NEW_LIMIT_WRAP.style.display = NEW_TYPE.value === 'true' ? '' : 'none';
+  });
+
+  document.getElementById('add-btn').addEventListener('click', async () => {
+    const name = document.getElementById('new-name').value.trim();
+    const errorEl = document.getElementById('add-error');
+    errorEl.classList.add('hidden');
+    if (!name) {
+      errorEl.textContent = 'Name is required.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    const payload = {
+      name,
+      bank: document.getElementById('new-bank').value,
+      is_credit_card: document.getElementById('new-type').value === 'true',
+      last4: document.getElementById('new-last4').value.trim(),
+      credit_limit: document.getElementById('new-limit').value ? Number(document.getElementById('new-limit').value) : null,
+      custom_pattern: document.getElementById('new-pattern').value.trim(),
+    };
+
+    const res = await fetch('/api/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      errorEl.textContent = data.detail || 'Failed to add card.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    location.reload();
+  });
+
+  document.querySelectorAll('.delete-card').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this card? Transactions already matched to it keep their history.')) return;
+      await fetch(`/api/cards/${btn.dataset.id}`, { method: 'DELETE' });
+      location.reload();
+    });
+  });
+</script>
+{% endblock %}

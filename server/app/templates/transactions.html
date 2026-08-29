@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Transactions · TxnTrace{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-bold text-gray-900">Transactions</h1>
+<p class="mt-1 text-sm text-gray-500">{{ transactions | length }} total. Click any row for full details.</p>
+
+{% if transactions %}
+<div class="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+      <tr>
+        <th class="px-4 py-3">Date</th>
+        <th class="px-4 py-3">Description</th>
+        <th class="px-4 py-3">Bank</th>
+        <th class="px-4 py-3">Source</th>
+        <th class="px-4 py-3 text-right">Amount</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for t in transactions %}
+      <tr class="cursor-pointer hover:bg-gray-50" onclick="openDetail('{{ t.id }}')">
+        <td class="px-4 py-3 whitespace-nowrap text-gray-600">{{ t.date[:10] if t.date else '—' }}</td>
+        <td class="px-4 py-3 text-gray-900">{{ t.merchant_raw or 'Unknown' }}</td>
+        <td class="px-4 py-3">
+          <span class="inline-flex items-center gap-2 text-gray-600">
+            {% if t.bank_logo %}
+            <img src="{{ t.bank_logo }}" alt="" class="h-5 w-auto max-w-[60px] shrink-0 object-contain" />
+            {% else %}
+            <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                  style="background-color: {{ t.bank_color }}"></span>
+            {% endif %}
+            {{ t.bank or '—' }}
+          </span>
+        </td>
+        <td class="px-4 py-3 text-gray-500">{{ t.source or '—' }}</td>
+        <td class="px-4 py-3 text-right font-semibold {{ 'text-credit' if t.type == 'credit' else 'text-debit' }}">
+          {{ '+' if t.type == 'credit' else '-' }}₹{{ '%.2f' | format(t.amount or 0) }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="mt-10 rounded-2xl border border-dashed border-gray-300 py-16 text-center text-gray-500">
+  No transactions yet. <a href="/" class="text-brand hover:underline">Import a statement</a> to get started.
+</div>
+{% endif %}
+
+<!-- Detail modal -->
+<div id="detail-overlay" class="fixed inset-0 z-10 hidden items-center justify-center bg-black/40 p-4" onclick="closeDetail(event)">
+  <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onclick="event.stopPropagation()">
+    <div class="flex items-start justify-between">
+      <h3 id="detail-merchant" class="text-lg font-bold text-gray-900"></h3>
+      <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600">✕</button>
+    </div>
+    <p id="detail-amount" class="mt-1 text-2xl font-bold"></p>
+    <dl id="detail-fields" class="mt-5 space-y-2 text-sm"></dl>
+  </div>
+</div>
+
+<script>const TRANSACTIONS = {{ transactions | tojson }};</script>
+<script>
+  const FIELD_LABELS = {
+    date: 'Date', bank: 'Bank', type: 'Type', category: 'Category', note: 'Note',
+    source: 'Source', reference: 'Reference', account_last4: 'Account', balance: 'Balance',
+    sender: 'Sender', sms_body: 'Message', created_at: 'Imported at', reviewed: 'Reviewed',
+  };
+
+  function openDetail(id) {
+    const txn = TRANSACTIONS.find((t) => t.id === id);
+    if (!txn) return;
+
+    document.getElementById('detail-merchant').textContent = txn.merchant_raw || 'Unknown';
+    const amountEl = document.getElementById('detail-amount');
+    amountEl.textContent = `${txn.type === 'credit' ? '+' : '-'}₹${Number(txn.amount || 0).toFixed(2)}`;
+    amountEl.className = `mt-1 text-2xl font-bold ${txn.type === 'credit' ? 'text-credit' : 'text-debit'}`;
+
+    const fieldsEl = document.getElementById('detail-fields');
+    fieldsEl.innerHTML = '';
+    Object.entries(FIELD_LABELS).forEach(([key, label]) => {
+      let value = txn[key];
+      if (value === null || value === undefined || value === '') return;
+      if (key === 'date' || key === 'created_at') value = new Date(value).toLocaleString();
+      if (key === 'reviewed') value = value ? 'Yes' : 'No';
+      fieldsEl.insertAdjacentHTML(
+        'beforeend',
+        `<div class="flex justify-between gap-4"><dt class="text-gray-500">${label}</dt><dd class="text-right text-gray-900 break-words">${value}</dd></div>`
+      );
+    });
+
+    document.getElementById('detail-overlay').classList.remove('hidden');
+    document.getElementById('detail-overlay').classList.add('flex');
+  }
+
+  function closeDetail(e) {
+    document.getElementById('detail-overlay').classList.add('hidden');
+    document.getElementById('detail-overlay').classList.remove('flex');
+  }
+</script>
+{% endblock %}

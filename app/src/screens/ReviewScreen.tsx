@@ -48,11 +48,11 @@ const ReviewScreen = () => {
 
   const loadData = async () => {
     try {
-      const catRes = await db.executeAsync('SELECT * FROM categories');
+      const catRes = await db.execute('SELECT * FROM categories');
       const catRows: any = catRes.rows;
       setCategories(catRows?._array || catRows || []);
 
-      const txnRes = await db.executeAsync('SELECT * FROM transactions WHERE reviewed = 0 ORDER BY date DESC');
+      const txnRes = await db.execute('SELECT * FROM transactions WHERE reviewed = 0 ORDER BY date DESC');
       const txnRows: any = txnRes.rows;
       setTxns(txnRows?._array || txnRows || []);
     } catch (error) {
@@ -72,14 +72,14 @@ const ReviewScreen = () => {
     if (!txn) return;
 
     try {
-      await db.executeAsync(
+      await db.execute(
         'UPDATE transactions SET category = ?, note = ?, reviewed = 1 WHERE id = ?',
         [selectedCategoryId, note, txn.id]
       );
 
       // Save splits if any
       for (const split of selectedContacts) {
-        await db.executeAsync(
+        await db.execute(
           'INSERT INTO splits (id, transaction_id, contact_id, contact_name, amount_owed) VALUES (?, ?, ?, ?, ?)',
           [String(Date.now() + Math.random()), txn.id, split.id, split.name, split.amountOwed]
         );

@@ -13,6 +13,7 @@
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		C704786F30376BAD00BDA2DB /* TxnTraceSMSFilter.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C704786830376BAD00BDA2DB /* TxnTraceSMSFilter.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C7A11E0230400002000AAAA2 /* IngestSMSIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A11E0130400001000AAAA1 /* IngestSMSIntent.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -50,6 +51,7 @@
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = TxnTrace/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = TxnTrace/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		C704786830376BAD00BDA2DB /* TxnTraceSMSFilter.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TxnTraceSMSFilter.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C7A11E0130400001000AAAA1 /* IngestSMSIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IngestSMSIntent.swift; path = TxnTrace/IngestSMSIntent.swift; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -98,6 +100,7 @@
 			children = (
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
+				C7A11E0130400001000AAAA1 /* IngestSMSIntent.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
@@ -196,8 +199,6 @@
 				C704786930376BAD00BDA2DB /* TxnTraceSMSFilter */,
 			);
 			name = TxnTraceSMSFilter;
-			packageProductDependencies = (
-			);
 			productName = TxnTraceSMSFilter;
 			productReference = C704786830376BAD00BDA2DB /* TxnTraceSMSFilter.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -347,6 +348,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				C7A11E0230400002000AAAA2 /* IngestSMSIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -375,6 +377,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = TxnTrace/TxnTrace.entitlements;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4G96L8W59F;
 				ENABLE_BITCODE = NO;
@@ -390,7 +393,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = org.mrimmortal09.txntrace;
+				PRODUCT_BUNDLE_IDENTIFIER = org.mrimmortal09.txntrace;
 				PRODUCT_NAME = TxnTrace;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -407,6 +410,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = TxnTrace/TxnTrace.entitlements;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4G96L8W59F;
 				INFOPLIST_FILE = TxnTrace/Info.plist;
@@ -421,7 +425,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = org.mrimmortal09.txntrace;
+				PRODUCT_BUNDLE_IDENTIFIER = org.mrimmortal09.txntrace;
 				PRODUCT_NAME = TxnTrace;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
