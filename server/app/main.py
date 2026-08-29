@@ -13,17 +13,28 @@ from starlette.requests import Request
 from .bank_styles import BANKS, FALLBACK, bank_style_for
 from .db import get_db, init_db
 from .parsing import parse_statement
+from .version import read_version_info
 
 BASE_DIR = Path(__file__).resolve().parent
 
 app = FastAPI(title="TxnTrace Server")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+templates.env.globals["version_info"] = {}
+
+VERSION_INFO: dict = {}
 
 
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    VERSION_INFO.update(read_version_info())
+    templates.env.globals["version_info"] = VERSION_INFO
+
+
+@app.get("/api/version")
+def api_version():
+    return VERSION_INFO
 
 
 def _row_id(bank: str, row: dict[str, Any]) -> str:

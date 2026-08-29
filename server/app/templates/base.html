@@ -23,10 +23,15 @@
   <nav class="border-b border-gray-200 bg-white">
     <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
       <a href="/" class="text-lg font-bold text-gray-900">TxnTrace</a>
-      <div class="flex gap-6 text-sm font-medium text-gray-500">
+      <div class="flex items-center gap-6 text-sm font-medium text-gray-500">
         <a href="/" class="hover:text-gray-900">Import Statement</a>
         <a href="/transactions" class="hover:text-gray-900">Transactions</a>
         <a href="/cards" class="hover:text-gray-900">Cards</a>
+        {% if version_info and version_info.commit %}
+        <span class="rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-400" title="{{ version_info.subject or '' }} · {{ version_info.commit_date or '' }}">
+          build {{ version_info.build or '?' }} · {{ version_info.commit }}
+        </span>
+        {% endif %}
       </div>
     </div>
   </nav>
