@@ -1,0 +1,15 @@
+[Unit]
+Description=TxnTrace server (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/txntrace/server
+EnvironmentFile=/home/ubuntu/txntrace/server/.env
+ExecStart=/home/ubuntu/txntrace/server/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
