@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { db } from '../db/schema';
+import { checkNewMessages } from '../services/smsIngest';
 
 interface SmsLogEntry {
   id: string;
@@ -36,11 +37,14 @@ const LogsScreen = () => {
     }
   }, []);
 
-  // Messages arrive in the background (foreground AppState listener in App.tsx),
-  // so logs need to refresh every time this tab is opened, not just on mount.
+  // iOS has no way to wake the app when the Shortcuts automation fires — the
+  // shared inbox only gets drained when something calls checkNewMessages(),
+  // which otherwise only happens at launch or on a background→active
+  // transition. Draining on focus means opening this tab is enough, even if
+  // the app was already open when the SMS arrived.
   useFocusEffect(
     useCallback(() => {
-      loadLogs();
+      checkNewMessages().then(loadLogs);
     }, [loadLogs])
   );
 

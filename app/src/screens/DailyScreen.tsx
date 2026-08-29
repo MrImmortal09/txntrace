@@ -6,19 +6,17 @@ import TransactionDetailModal, { TransactionRow } from '../components/Transactio
 import SwipeableRow from '../components/SwipeableRow';
 import SplitModal from '../components/SplitModal';
 import BankIcon from '../components/BankIcon';
+import { useTheme } from '../theme/ThemeProvider';
+import { checkNewMessages } from '../services/smsIngest';
 
 type Transaction = TransactionRow;
 
 const DailyScreen = () => {
+  const { colors } = useTheme();
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [splitting, setSplitting] = useState<Transaction | null>(null);
 
-  // Not scoped to a single day — this is a "needs a decision" queue across all
-  // time, cleared one of three ways: split it, confirm it's a personal spend
-  // (swipe right, or the Mine button), or leave it for later. None of these
-  // remove the underlying transaction — "reviewed" only controls whether it
-  // shows up here, the row and its amount always stay in spend totals.
   const load = useCallback(async () => {
     try {
       const res = await db.execute(
@@ -31,9 +29,13 @@ const DailyScreen = () => {
     }
   }, []);
 
+  // Opening this tab is the only "immediate" check available — iOS has no way
+  // to wake the app in the background when the Shortcuts automation fires, so
+  // if the app was already open when the SMS arrived, nothing drains the
+  // shared inbox until something calls checkNewMessages() again.
   useFocusEffect(
     useCallback(() => {
-      load();
+      checkNewMessages().then(load);
     }, [load])
   );
 
@@ -43,7 +45,7 @@ const DailyScreen = () => {
       await db.execute('UPDATE transactions SET reviewed = 1 WHERE id = ?', [txn.id]);
     } catch (error) {
       console.error('Failed to confirm transaction:', error);
-      load(); // put it back in the list if the write failed
+      load();
     }
   };
 
@@ -51,23 +53,23 @@ const DailyScreen = () => {
   const creditTotal = txns.filter(t => t.type === 'credit').reduce((s, t) => s + t.amount, 0);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>Needs Review</Text>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <Text style={[styles.title, { color: colors.text }]}>Needs Review</Text>
 
       <View style={styles.summaryRow}>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Pending spend</Text>
-          <Text style={[styles.summaryAmount, styles.debit]}>₹{debitTotal.toFixed(2)}</Text>
+        <View style={[styles.summaryCard, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+          <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Pending spend</Text>
+          <Text style={[styles.summaryAmount, { color: colors.danger }]}>₹{debitTotal.toFixed(2)}</Text>
         </View>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Pending received</Text>
-          <Text style={[styles.summaryAmount, styles.credit]}>₹{creditTotal.toFixed(2)}</Text>
+        <View style={[styles.summaryCard, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+          <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Pending received</Text>
+          <Text style={[styles.summaryAmount, { color: colors.success }]}>₹{creditTotal.toFixed(2)}</Text>
         </View>
       </View>
 
       {txns.length === 0 ? (
         <View style={styles.center}>
-          <Text style={styles.emptyText}>All caught up — nothing waiting on a decision.</Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>All caught up — nothing waiting on a decision.</Text>
         </View>
       ) : (
         <FlatList
@@ -76,25 +78,31 @@ const DailyScreen = () => {
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => (
             <SwipeableRow onSwipeRight={() => confirmMine(item)}>
-              <TouchableOpacity style={styles.row} onPress={() => setSelected(item)} activeOpacity={0.8}>
-                <BankIcon bank={item.bank} size={36} />
-                <View style={styles.rowMiddle}>
-                  <Text style={styles.merchant} numberOfLines={1}>{item.merchant_raw || 'Unknown'}</Text>
-                  <Text style={styles.meta}>
-                    {new Date(item.date).toLocaleDateString([], { day: '2-digit', month: 'short' })}
-                    {item.category ? ` · ${item.category}` : ''}
+              <View style={[styles.row, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+                <TouchableOpacity style={styles.rowLeft} onPress={() => setSelected(item)} activeOpacity={0.8}>
+                  <BankIcon bank={item.bank} size={36} />
+                  <View style={styles.rowMiddle}>
+                    <Text style={[styles.merchant, { color: colors.text }]} numberOfLines={1}>{item.merchant_raw || 'Unknown'}</Text>
+                    <Text style={[styles.meta, { color: colors.textSecondary }]}>
+                      {new Date(item.date).toLocaleDateString([], { day: '2-digit', month: 'short' })}
+                      {item.category ? ` · ${item.category}` : ''}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <View style={styles.rowRight}>
+                  <Text style={[styles.amount, { color: item.type === 'credit' ? colors.success : colors.danger }]}>
+                    {item.type === 'credit' ? '+' : '-'}₹{item.amount.toFixed(2)}
                   </Text>
+                  <View style={styles.actions}>
+                    <TouchableOpacity style={[styles.splitButton, { backgroundColor: colors.primary }]} onPress={() => setSplitting(item)}>
+                      <Text style={styles.actionButtonText}>Split</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.mineButton, { backgroundColor: colors.success }]} onPress={() => confirmMine(item)}>
+                      <Text style={styles.actionButtonText}>Mine</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-                <Text style={[styles.amount, item.type === 'credit' ? styles.credit : styles.debit]}>
-                  {item.type === 'credit' ? '+' : '-'}₹{item.amount.toFixed(2)}
-                </Text>
-                <TouchableOpacity style={styles.splitButton} onPress={() => setSplitting(item)}>
-                  <Text style={styles.splitButtonText}>Split</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.mineButton} onPress={() => confirmMine(item)}>
-                  <Text style={styles.mineButtonText}>Mine</Text>
-                </TouchableOpacity>
-              </TouchableOpacity>
+              </View>
             </SwipeableRow>
           )}
         />
@@ -119,33 +127,36 @@ const DailyScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#333', paddingHorizontal: 16, paddingTop: 16 },
+  container: { flex: 1 },
+  title: { fontSize: 24, fontWeight: 'bold', paddingHorizontal: 16, paddingTop: 16 },
   summaryRow: { flexDirection: 'row', paddingHorizontal: 16, marginTop: 12, marginBottom: 8, gap: 12 },
-  summaryCard: { flex: 1, backgroundColor: '#fff', borderRadius: 10, padding: 14, alignItems: 'center' },
-  summaryLabel: { fontSize: 12, color: '#999', marginBottom: 4 },
-  summaryAmount: { fontSize: 18, fontWeight: 'bold' },
+  summaryCard: { flex: 1, borderRadius: 12, padding: 16, alignItems: 'center', elevation: 2, shadowOpacity: 1, shadowOffset: { width: 0, height: 2 }, shadowRadius: 8 },
+  summaryLabel: { fontSize: 13, marginBottom: 6, fontWeight: '500' },
+  summaryAmount: { fontSize: 20, fontWeight: 'bold' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
-  emptyText: { color: '#999', fontSize: 15, textAlign: 'center' },
+  emptyText: { fontSize: 15, textAlign: 'center' },
   listContent: { padding: 16, paddingTop: 8 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 12,
-    gap: 10,
+    marginBottom: 10,
+    elevation: 2,
+    shadowOpacity: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 8,
   },
-  rowMiddle: { flex: 1 },
-  merchant: { fontSize: 15, fontWeight: '600', color: '#333' },
-  meta: { fontSize: 12, color: '#999', marginTop: 2 },
+  rowLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  rowMiddle: { flex: 1, justifyContent: 'center' },
+  merchant: { fontSize: 16, fontWeight: '600' },
+  meta: { fontSize: 13, marginTop: 4 },
+  rowRight: { alignItems: 'flex-end', justifyContent: 'center', gap: 8 },
   amount: { fontSize: 15, fontWeight: 'bold' },
-  debit: { color: '#FF3B30' },
-  credit: { color: '#34C759' },
-  splitButton: { backgroundColor: '#FF9500', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
-  splitButtonText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  mineButton: { backgroundColor: '#34C759', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
-  mineButtonText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  actions: { flexDirection: 'row', gap: 6 },
+  splitButton: { borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
+  mineButton: { borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
+  actionButtonText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });
 
 export default DailyScreen;

@@ -43,6 +43,7 @@
           <th class="px-4 py-3">Description</th>
           <th class="px-4 py-3">Category</th>
           <th class="px-4 py-3 text-right">Amount</th>
+          <th class="px-4 py-3 text-center">Details</th>
           <th class="px-4 py-3"></th>
         </tr>
       </thead>
@@ -52,6 +53,25 @@
 </div>
 
 <div id="success-banner" class="mt-6 hidden rounded-xl bg-green-50 px-5 py-4 text-sm font-medium text-green-800"></div>
+
+<!-- Row detail modal — shows every field the file actually had for this row,
+     not just the columns the review table has room for (date/amount/merchant
+     alone can hide the real biller name when a statement has several
+     description-like columns and the parser picked the less useful one). -->
+<div id="detail-overlay" class="fixed inset-0 z-10 hidden items-center justify-center bg-black/40 p-4" onclick="closeRowDetail(event)">
+  <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onclick="event.stopPropagation()">
+    <div class="flex items-start justify-between">
+      <h3 id="detail-merchant" class="text-lg font-bold text-gray-900"></h3>
+      <button onclick="closeRowDetail()" class="text-gray-400 hover:text-gray-600">✕</button>
+    </div>
+    <p id="detail-amount" class="mt-1 text-2xl font-bold"></p>
+    <dl id="detail-fields" class="mt-5 space-y-2 text-sm"></dl>
+    <div class="mt-5 border-t border-gray-100 pt-4">
+      <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">All fields from the file</p>
+      <dl id="detail-raw-fields" class="space-y-2 text-sm"></dl>
+    </div>
+  </div>
+</div>
 
 <script>const CATEGORIES = {{ ['Food', 'Transport', 'Bills', 'Shopping', 'Rent', 'Other'] | tojson }};</script>
 <script src="/static/app.js"></script>

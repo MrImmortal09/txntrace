@@ -3,16 +3,17 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { StatusBar, StyleSheet, useColorScheme, View, Text, AppState, TouchableOpacity } from 'react-native';
+import { StatusBar, StyleSheet, View, Text, AppState, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { TabNavigator } from './src/screens/TabNavigator';
 import { setupDatabase } from './src/db/schema';
-import SharedSMSStore from 'shared-sms-store';
-import { processSMSBatch } from './src/parsers/sms';
+import { checkNewMessages } from './src/services/smsIngest';
 
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
+
+function MainApp() {
+  const { isDark, colors } = useTheme();
   const [dbInitialized, setDbInitialized] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
 
@@ -30,41 +31,32 @@ function App() {
 
   useEffect(() => {
     if (!dbInitialized) return;
-    checkNewMessages();
+    const runCheck = () => checkNewMessages().then(({ error }) => setSmsError(error));
+    runCheck();
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
-        checkNewMessages();
+        runCheck();
       }
     });
     return () => { subscription.remove(); };
   }, [dbInitialized]);
 
-  const checkNewMessages = async () => {
-    try {
-      const messages = await SharedSMSStore.readNewMessages();
-      setSmsError(null);
-      if (messages && messages.length > 0) {
-        await processSMSBatch(messages);
-      }
-    } catch (error: any) {
-      console.error('Error reading SMS store:', error);
-      setSmsError('Could not read incoming messages. Check SMS setup in Settings.');
-    }
-  };
-
   if (!dbInitialized) {
     return (
-      <View style={styles.loadingContainer}>
-        <Text>Initializing Database...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <Text style={{ color: colors.text }}>Initializing Database...</Text>
       </View>
     );
   }
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      <StatusBar
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        {...(Platform.OS === 'android' ? { backgroundColor: colors.background } : null)}
+      />
       {smsError && (
-        <View style={styles.banner}>
+        <View style={[styles.banner, { backgroundColor: colors.danger }]}>
           <Text style={styles.bannerText}>{smsError}</Text>
           <TouchableOpacity onPress={() => setSmsError(null)}>
             <Text style={styles.bannerDismiss}>✕</Text>
@@ -81,7 +73,6 @@ function App() {
 const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   banner: {
-    backgroundColor: '#ff3b30',
     padding: 12,
     paddingTop: 50,
     flexDirection: 'row',
@@ -92,4 +83,10 @@ const styles = StyleSheet.create({
   bannerDismiss: { color: 'white', fontSize: 18, fontWeight: 'bold', marginLeft: 10, padding: 4 },
 });
 
-export default App;
+export default function App() {
+  return (
+    <ThemeProvider>
+      <MainApp />
+    </ThemeProvider>
+  );
+}

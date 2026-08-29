@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Linking, Platform, ScrollView } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import SharedSMSStore from 'shared-sms-store';
 import { db } from '../db/schema';
 import { getServerUrl, setServerUrl, syncFromServer, syncCardsFromServer } from '../services/webSync';
+import { useTheme } from '../theme/ThemeProvider';
 
 const SettingsScreen = () => {
+  const navigation = useNavigation<any>();
+  const { colors } = useTheme();
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [serverUrl, setServerUrlInput] = useState('');
   const [syncing, setSyncing] = useState(false);
@@ -66,11 +70,23 @@ const SettingsScreen = () => {
       log(`getIngestStats FAILED: ${e.message}`);
     }
 
-    // Step 4: Peek at messages WITHOUT clearing them
+    // Step 4: Peek at messages WITHOUT clearing them — printed one per line
+    // (not one JSON blob) since this is the actual "did my message really
+    // arrive via the automation" check, and a raw stringify is unreadable
+    // once there's more than one pending message.
     try {
       const messages = await (SharedSMSStore as any).peekMessages();
-      log(`Messages in store (peek): ${JSON.stringify(messages)}`);
-      log(`Message count: ${Array.isArray(messages) ? messages.length : 'NOT AN ARRAY'}`);
+      if (!Array.isArray(messages)) {
+        log(`Messages in store: NOT AN ARRAY (${JSON.stringify(messages)})`);
+      } else if (messages.length === 0) {
+        log('Messages in store: none pending — nothing waiting to be drained.');
+      } else {
+        log(`Messages in store: ${messages.length} pending`);
+        messages.forEach((m: any, i: number) => {
+          log(`  [${i}] source=${m.source ?? 'unknown'} sender=${m.sender || '(none)'} at=${m.receivedAt || '?'}`);
+          log(`      "${(m.body || '').slice(0, 140)}${(m.body || '').length > 140 ? '…' : ''}"`);
+        });
+      }
     } catch (e: any) {
       log(`peekMessages FAILED: ${e.message}`);
     }
@@ -116,87 +132,108 @@ const SettingsScreen = () => {
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>SMS Tracking</Text>
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>1. Shortcuts automation</Text>
-        <Text style={styles.hint}>The main way TxnTrace sees your bank SMS</Text>
-        <Text style={styles.description}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.contentContainer}>
+      <Text style={[styles.title, { color: colors.text }]}>Settings</Text>
+
+      <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>1. Shortcuts automation</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way TxnTrace sees your bank SMS</Text>
+        <Text style={[styles.description, { color: colors.textSecondary }]}>
           iOS has no API for reading messages, so you hand them to TxnTrace with a
           one-time automation. It runs in the background — nothing opens, nothing
           is sent anywhere.
         </Text>
 
-        <Text style={styles.instructions}>
-          1. Open Shortcuts → Automation tab{'\n'}
-          2. Tap + → Message{'\n'}
-          3. Leave Sender and Message empty to catch every bank{'\n'}
-          4. Turn on Run Immediately, turn off Notify When Run{'\n'}
-          5. New Blank Automation → add action “Save Transaction SMS”{'\n'}
-          6. Set its Message field to the Shortcut Input variable
-        </Text>
+        <View style={[styles.instructions, { backgroundColor: colors.background, borderColor: colors.border }]}>
+          <Text style={[styles.instructionsText, { color: colors.textSecondary }]}>
+            1. Open Shortcuts → Automation tab{'\n'}
+            2. Tap + → Message{'\n'}
+            3. Leave Sender and Message empty to catch every bank{'\n'}
+            4. Turn on Run Immediately, turn off Notify When Run{'\n'}
+            5. New Blank Automation → add action “Save Transaction SMS”{'\n'}
+            6. Set its Message field to the Shortcut Input variable
+          </Text>
+        </View>
 
-        <Text style={styles.warn}>
-          Only messages received after setup are captured — there is no way to
-          import your SMS history.
-        </Text>
+        <View style={[styles.callout, { backgroundColor: colors.background, borderLeftColor: colors.danger }]}>
+          <Text style={[styles.calloutText, { color: colors.textSecondary }]}>
+            Only messages received after setup are captured — there is no way to
+            import your SMS history.
+          </Text>
+        </View>
 
-        <TouchableOpacity style={styles.button} onPress={openShortcuts}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={openShortcuts}>
           <Text style={styles.buttonText}>Open Shortcuts</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={[styles.card, { marginTop: 16 }]}>
-        <Text style={styles.sectionTitle}>2. Message filter (backup)</Text>
-        <Text style={styles.hint}>Optional — kept for the upcoming server-side path</Text>
-        <Text style={styles.description}>
+      <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>2. Message filter (backup)</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>Optional — kept for the upcoming server-side path</Text>
+        <Text style={[styles.description, { color: colors.textSecondary }]}>
           The filter extension sits in the message delivery path, so it misses less
           than an automation. It cannot store anything on-device yet, so leave this
           off unless you are helping test.
         </Text>
 
-        <Text style={styles.instructions}>
-          1. Open the Settings app{'\n'}
-          2. Go to Messages{'\n'}
-          3. Tap on Unknown & Spam{'\n'}
-          4. Enable TxnTraceSMSFilter under SMS Filtering
-        </Text>
+        <View style={[styles.instructions, { backgroundColor: colors.background, borderColor: colors.border }]}>
+          <Text style={[styles.instructionsText, { color: colors.textSecondary }]}>
+            1. Open the Settings app{'\n'}
+            2. Go to Messages{'\n'}
+            3. Tap on Unknown & Spam{'\n'}
+            4. Enable TxnTraceSMSFilter under SMS Filtering
+          </Text>
+        </View>
 
-        <TouchableOpacity style={[styles.button, { backgroundColor: '#8e8e93' }]} onPress={openMessagesSettings}>
-          <Text style={styles.buttonText}>Open Messages Settings</Text>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, { borderColor: colors.border }]}
+          onPress={openMessagesSettings}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Open Messages Settings</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={[styles.card, { marginTop: 16 }]}>
-        <Text style={styles.sectionTitle}>3. Sync from web</Text>
-        <Text style={styles.hint}>Pulls in statements you've imported and sorted on the web app</Text>
+      <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>3. Sync from web</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>Pulls in statements you've imported and sorted on the web app</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
           placeholder="http://192.168.1.10:8000"
+          placeholderTextColor={colors.textSecondary}
           autoCapitalize="none"
           autoCorrect={false}
           value={serverUrl}
           onChangeText={setServerUrlInput}
         />
-        <TouchableOpacity style={styles.button} onPress={handleSync} disabled={syncing}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={handleSync} disabled={syncing}>
           <Text style={styles.buttonText}>{syncing ? 'Syncing…' : 'Sync from Web'}</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={[styles.card, { marginTop: 16 }]}>
-        <Text style={styles.sectionTitle}>🔧 Diagnostics</Text>
-        <Text style={styles.hint}>Tap after receiving a bank SMS to debug the pipeline</Text>
-        <TouchableOpacity style={[styles.button, { backgroundColor: '#FF9500', marginBottom: 10 }]} onPress={runDiagnostics}>
-          <Text style={styles.buttonText}>Run Diagnostics</Text>
+      <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Diagnostics</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>Tap after receiving a bank SMS to debug the pipeline</Text>
+
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, styles.buttonSpacing, { borderColor: colors.border }]}
+          onPress={runDiagnostics}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Run Diagnostics</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.button, { backgroundColor: '#FF3B30' }]} onPress={clearDb}>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, styles.buttonSpacing, { borderColor: colors.border }]}
+          onPress={() => navigation.navigate('Logs')}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>View SMS Logs</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.button, { backgroundColor: colors.danger }]} onPress={clearDb}>
           <Text style={styles.buttonText}>Clear DB (for testing)</Text>
         </TouchableOpacity>
 
         {debugLog.length > 0 && (
-          <View style={styles.logBox}>
+          <View style={[styles.logBox, { backgroundColor: colors.background, borderColor: colors.border }]}>
             {debugLog.map((line, i) => (
-              <Text key={i} style={styles.logLine}>{line}</Text>
+              <Text key={i} style={[styles.logLine, { color: colors.textSecondary }]}>{line}</Text>
             ))}
           </View>
         )}
@@ -208,91 +245,99 @@ const SettingsScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+  },
+  contentContainer: {
     padding: 16,
+    paddingBottom: 40,
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#333',
+    fontSize: 28,
+    fontWeight: '700',
+    marginBottom: 20,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 17,
+    fontWeight: '600',
     marginBottom: 4,
-    color: '#333',
   },
   hint: {
     fontSize: 13,
-    color: '#888',
     marginBottom: 14,
   },
-  warn: {
-    fontSize: 13,
-    color: '#8a6d3b',
-    backgroundColor: '#fcf8e3',
+  callout: {
+    borderLeftWidth: 3,
     padding: 10,
     borderRadius: 6,
-    lineHeight: 19,
     marginBottom: 16,
   },
+  calloutText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
   card: {
-    backgroundColor: 'white',
-    borderRadius: 8,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    shadowOffset: { height: 2, width: 0 },
+    borderRadius: 14,
+    padding: 18,
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    shadowOffset: { height: 4, width: 0 },
     elevation: 2,
   },
+  cardSpacing: {
+    marginTop: 16,
+  },
   description: {
-    fontSize: 16,
-    color: '#444',
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 21,
     marginBottom: 16,
   },
   input: {
-    backgroundColor: '#f9f9f9',
     borderWidth: 1,
-    borderColor: '#eee',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
     fontSize: 15,
     marginBottom: 12,
   },
   instructions: {
-    fontSize: 14,
-    color: '#666',
-    lineHeight: 24,
-    backgroundColor: '#f9f9f9',
+    borderRadius: 10,
+    borderWidth: 1,
     padding: 12,
-    borderRadius: 6,
-    marginBottom: 20,
+    marginBottom: 12,
+  },
+  instructionsText: {
+    fontSize: 14,
+    lineHeight: 23,
   },
   button: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingVertical: 13,
+    borderRadius: 10,
     alignItems: 'center',
   },
+  buttonSpacing: {
+    marginBottom: 10,
+  },
+  buttonSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+  },
   buttonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  buttonSecondaryText: {
+    fontWeight: '600',
+    fontSize: 15,
   },
   logBox: {
     marginTop: 14,
-    backgroundColor: '#1c1c1e',
-    borderRadius: 8,
-    padding: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
   },
   logLine: {
-    fontFamily: 'Menlo',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 11,
-    color: '#4cd964',
-    lineHeight: 18,
+    lineHeight: 17,
   },
 });
 

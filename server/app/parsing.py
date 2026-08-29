@@ -47,13 +47,19 @@ HEADER_SEARCH_ROWS = 60
 
 
 def _find_col(headers: list[str], keys: list[str], claimed: set[str] | None = None) -> str | None:
+    """Tries keys in priority order (not headers in order) — keys is ordered
+    specific-to-generic, e.g. DESC_KEYS ends with the generic "transaction"
+    fallback. A header-outer loop would let "Transaction type" win over the
+    real "Description" column just because it happens to appear first in the
+    file, matching only on that generic tail key — real HDFC exports have
+    both, and got this wrong before this was key-ordered instead.
+    """
     claimed = claimed or set()
-    for h in headers:
-        if h in claimed:
-            continue
-        low = h.lower().strip()
-        if any(k in low for k in keys):
-            return h
+    available = [h for h in headers if h not in claimed]
+    for k in keys:
+        for h in available:
+            if k in h.lower().strip():
+                return h
     return None
 
 

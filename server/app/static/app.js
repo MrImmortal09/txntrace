@@ -31,6 +31,9 @@ function renderReviewTable() {
         </select>
       </td>
       <td class="px-4 py-3 text-right font-semibold ${amountClass}">${sign}₹${fmtAmount(row.amount)}</td>
+      <td class="px-4 py-3 text-center">
+        <button data-idx="${i}" class="detail-row inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 text-xs font-bold text-gray-500 hover:border-brand hover:text-brand" title="Show every field from the file">i</button>
+      </td>
       <td class="px-4 py-3 text-right">
         <button data-idx="${i}" class="remove-row text-xs font-medium text-gray-400 hover:text-debit">Remove</button>
       </td>
@@ -51,6 +54,48 @@ function renderReviewTable() {
       renderReviewTable();
     });
   });
+  tbody.querySelectorAll('.detail-row').forEach((btn) => {
+    btn.addEventListener('click', (e) => openRowDetail(Number(e.target.dataset.idx)));
+  });
+}
+
+// Every field the parser actually found for this row — including whatever the
+// review table's Description column *didn't* pick, which is exactly the case
+// that prompted this: a statement with both a "Transaction type" and a real
+// "Description" column, where the wrong one was reaching the table.
+function openRowDetail(idx) {
+  const row = parsedRows[idx];
+  if (!row) return;
+
+  document.getElementById('detail-merchant').textContent = row.merchant || 'Unknown';
+  const amountEl = document.getElementById('detail-amount');
+  amountEl.textContent = `${row.type === 'credit' ? '+' : '-'}₹${fmtAmount(row.amount)}`;
+  amountEl.className = `mt-1 text-2xl font-bold ${row.type === 'credit' ? 'text-credit' : 'text-debit'}`;
+
+  const fieldsEl = document.getElementById('detail-fields');
+  fieldsEl.innerHTML = '';
+  const fields = { Date: fmtDate(row.date), Type: row.type, Category: row.category || null, Balance: row.balance != null ? `₹${fmtAmount(row.balance)}` : null };
+  Object.entries(fields).forEach(([label, value]) => {
+    if (value === null || value === undefined || value === '') return;
+    fieldsEl.insertAdjacentHTML('beforeend',
+      `<div class="flex justify-between gap-4"><dt class="text-gray-500">${label}</dt><dd class="text-right text-gray-900 break-words">${value}</dd></div>`);
+  });
+
+  const rawEl = document.getElementById('detail-raw-fields');
+  rawEl.innerHTML = '';
+  Object.entries(row.raw || {}).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') return;
+    rawEl.insertAdjacentHTML('beforeend',
+      `<div class="flex justify-between gap-4"><dt class="text-gray-500">${key}</dt><dd class="text-right text-gray-900 break-words">${value}</dd></div>`);
+  });
+
+  document.getElementById('detail-overlay').classList.remove('hidden');
+  document.getElementById('detail-overlay').classList.add('flex');
+}
+
+function closeRowDetail(e) {
+  document.getElementById('detail-overlay').classList.add('hidden');
+  document.getElementById('detail-overlay').classList.remove('flex');
 }
 
 function showError(message) {
