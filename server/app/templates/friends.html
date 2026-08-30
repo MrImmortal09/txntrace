@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Friends · TxnTrace{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-bold text-gray-900">Friends</h1>
+<p class="mt-1 text-sm text-gray-500">Who owes what, combining splits made here and on your phone.</p>
+
+{% if friends %}
+<div class="mt-6 space-y-3">
+  {% for f in friends %}
+  <a href="/friends/{{ f.contact_id }}" class="flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:border-brand">
+    <span class="font-semibold text-gray-900">{{ f.contact_name or 'Unknown' }}</span>
+    {% if f.owed > 0 %}
+    <span class="text-sm font-bold text-orange-500">owes ₹{{ '%.2f' | format(f.owed) }}</span>
+    {% else %}
+    <span class="text-sm font-semibold text-credit">settled up</span>
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="mt-10 rounded-2xl border border-dashed border-gray-300 py-16 text-center text-gray-500">
+  No friends yet — split a transaction on <a href="/transactions" class="text-brand hover:underline">the Transactions page</a>,
+  or from the app, to get started.
+</div>
+{% endif %}
+{% endblock %}

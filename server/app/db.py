@@ -68,10 +68,16 @@ CREATE TABLE IF NOT EXISTS contacts (
 """
 
 # Mirrors the mobile app's `splits` table (app/src/db/schema.ts) column for
-# column, plus one addition: created_at, needed only so the phone can pull
-# down what's new since its last sync instead of the whole table — the
-# phone's own INSERT names its columns explicitly, so the extra field is
-# simply ignored on that side.
+# column, plus a few additions. created_at lets the phone pull down what's
+# new since its last sync instead of the whole table. txn_date/txn_merchant/
+# txn_amount are deliberately denormalized rather than requiring a join to
+# `transactions`: a split authored on the phone (SMS-matched, or a manual
+# expense with no transaction of its own) has no guarantee its transaction
+# ever reaches this server at all, since transactions only sync one
+# direction (web/statement -> phone), never the reverse. Storing what the
+# web's own Friends page needs to display directly on the split — the same
+# way settlements already denormalize contact_name instead of joining
+# contacts — means that page never needs a transaction row to exist here.
 SPLITS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS splits (
     id TEXT PRIMARY KEY,
@@ -80,6 +86,26 @@ CREATE TABLE IF NOT EXISTS splits (
     contact_name TEXT,
     amount_owed REAL,
     settled INTEGER DEFAULT 0,
+    created_at TEXT,
+    txn_date TEXT,
+    txn_merchant TEXT,
+    txn_amount REAL
+);
+"""
+
+# Mirrors the mobile app's `settlements` table column for column — like
+# splits, mostly authored on the phone (from an SMS credit matched to a
+# contact) but pushed up so the web's Friends page can show the same
+# payment history, not just what's still owed.
+SETTLEMENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS settlements (
+    id TEXT PRIMARY KEY,
+    contact_id TEXT,
+    contact_name TEXT,
+    amount REAL,
+    transaction_id TEXT,
+    matched_split_id TEXT,
+    date TEXT,
     created_at TEXT
 );
 """
@@ -106,6 +132,7 @@ def init_db() -> None:
         conn.execute(CARDS_SCHEMA)
         conn.execute(CONTACTS_SCHEMA)
         conn.execute(SPLITS_SCHEMA)
+        conn.execute(SETTLEMENTS_SCHEMA)
         # Added after the initial table, so existing deployments need an
         # explicit migration rather than picking it up from CREATE TABLE IF
         # NOT EXISTS (a no-op once the table already exists). Lets an edit
@@ -114,3 +141,18 @@ def init_db() -> None:
         # see /api/transactions/export and the mobile app's syncFromServer.
         conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS updated_at TEXT")
         conn.execute("UPDATE transactions SET updated_at = created_at WHERE updated_at IS NULL")
+        # Added after splits already existed in deployed databases — see the
+        # SPLITS_SCHEMA comment for why these are denormalized rather than
+        # requiring a join.
+        conn.execute("ALTER TABLE splits ADD COLUMN IF NOT EXISTS txn_date TEXT")
+        conn.execute("ALTER TABLE splits ADD COLUMN IF NOT EXISTS txn_merchant TEXT")
+        conn.execute("ALTER TABLE splits ADD COLUMN IF NOT EXISTS txn_amount REAL")
+        # Backfills existing web-authored splits (the only kind that could
+        # already be in this table) from the transaction they reference,
+        # which does exist for those, unlike a hypothetical phone-authored one.
+        conn.execute(
+            """UPDATE splits SET
+                 txn_date = t.date, txn_merchant = t.merchant_raw, txn_amount = t.amount
+               FROM transactions t
+               WHERE t.id = splits.transaction_id AND splits.txn_amount IS NULL"""
+        )

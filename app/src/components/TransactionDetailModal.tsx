@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, SafeAreaView, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 
 export interface TransactionRow {
   id: string;
@@ -41,10 +41,10 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
   if (!transaction) return null;
 
   return (
-    <Modal visible={!!transaction} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={!!transaction} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-        <SafeAreaView style={styles.sheet}>
+        <View style={styles.card}>
           <View style={styles.header}>
             <Text style={styles.merchant} numberOfLines={2}>{transaction.merchant_raw || 'Unknown'}</Text>
             <TouchableOpacity onPress={onClose}>
@@ -71,22 +71,27 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
               );
             })}
           </ScrollView>
-        </SafeAreaView>
+        </View>
       </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end' },
+  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: {
+  card: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '80%',
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    maxHeight: '75%',
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 20,
+    elevation: 8,
   },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   merchant: { fontSize: 20, fontWeight: 'bold', color: '#333', flex: 1, marginRight: 12 },

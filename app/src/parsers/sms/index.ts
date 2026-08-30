@@ -91,11 +91,17 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
       const date = new Date(msg.receivedAt || Date.now()).toISOString();
 
       // Shortcuts does not always give us a usable sender (an automation can fire
-      // with it empty), so fall back to trying every parser on the body alone
-      // rather than dropping the message — but only when the body actually reads
-      // like a bank SMS.
+      // with it empty). First fallback: most bank SMS name the bank somewhere in
+      // the body too ("...UPI:660887017514-ICICI Bank."), so re-run the same
+      // canHandle checks against the body text itself before giving up on
+      // routing by bank at all — this is what actually recovers the right bank
+      // with no sender, rather than just picking whichever parser's generic
+      // amount/debit-credit wording happens to match first. Only if *that* also
+      // fails does it fall through to trying every parser blind, and only when
+      // the body reads like a bank SMS at all.
       const parsed =
         routeSms(msg.sender, msg.body, date) ??
+        routeSms(msg.body, msg.body, date) ??
         (looksLikeBankSms(msg.body) ? parseAnySms(msg.body, date) : null);
 
       // Every distinct message body gets its own log row, even if it turns out to

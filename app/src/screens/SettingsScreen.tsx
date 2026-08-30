@@ -11,13 +11,17 @@ import {
   syncCardsFromServer,
   syncContactsToServer,
   syncSplitsFromServer,
+  syncSplitsToServer,
+  syncSettlementsToServer,
 } from '../services/webSync';
+import { reparseStoredMessages } from '../services/reparseMessages';
 import { useTheme } from '../theme/ThemeProvider';
 
 const SettingsScreen = () => {
   const navigation = useNavigation<any>();
   const { colors } = useTheme();
   const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [reparsing, setReparsing] = useState(false);
   const [serverUrl, setServerUrlInput] = useState('');
   const [syncing, setSyncing] = useState(false);
 
@@ -142,8 +146,16 @@ const SettingsScreen = () => {
         log(`Contact push skipped: ${e.message}`);
       }
 
+      // Pushed up before pulling down, so the web's Friends page reflects
+      // splits/settlements from SMS-matching and the app's own manual-
+      // expense flow, not just whatever was created directly on the web.
+      const { count: splitsPushed } = await syncSplitsToServer();
+      const { count: settlementsPushed } = await syncSettlementsToServer();
       const { imported: splitsImported } = await syncSplitsFromServer();
-      log(`Synced from web ✅ — ${imported} new transaction(s), ${count} card(s)/account(s)${contactsMsg}, ${splitsImported} new split(s).`);
+      log(
+        `Synced from web ✅ — ${imported} new transaction(s), ${count} card(s)/account(s)${contactsMsg}, ` +
+          `${splitsImported} new split(s), ${splitsPushed} split(s) + ${settlementsPushed} settlement(s) pushed.`
+      );
     } catch (e: any) {
       log(`Sync FAILED ❌: ${e.message}`);
     } finally {
@@ -157,6 +169,19 @@ const SettingsScreen = () => {
       log('DB cleared ✅');
     } catch (e: any) {
       log(`Clear DB FAILED: ${e.message}`);
+    }
+  };
+
+  const runReparse = async () => {
+    setReparsing(true);
+    log('--- Re-parsing stored messages ---');
+    try {
+      const { updated, matched } = await reparseStoredMessages();
+      log(`Done ✅ — ${updated} transaction(s) corrected, ${matched} newly matched to a friend.`);
+    } catch (e: any) {
+      log(`Re-parse FAILED ❌: ${e.message}`);
+    } finally {
+      setReparsing(false);
     }
   };
 
@@ -224,7 +249,7 @@ const SettingsScreen = () => {
 
       <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>3. Sync from web</Text>
-        <Text style={[styles.hint, { color: colors.textSecondary }]}>Pulls in statements and splits from the web app, and pushes your contacts up so you can split with them there too</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>Pulls in statements and splits from the web app, and pushes your contacts and friend activity up so the web's Friends page matches this one</Text>
         <TextInput
           style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
           placeholder="http://192.168.1.10:8000"
@@ -254,6 +279,15 @@ const SettingsScreen = () => {
           onPress={() => navigation.navigate('Logs')}
         >
           <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>View SMS Logs</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, styles.buttonSpacing, { borderColor: colors.border }]}
+          onPress={runReparse}
+          disabled={reparsing}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>
+            {reparsing ? 'Re-parsing…' : 'Re-parse Stored Messages'}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.button, { backgroundColor: colors.danger }]} onPress={clearDb}>
           <Text style={styles.buttonText}>Clear DB (for testing)</Text>

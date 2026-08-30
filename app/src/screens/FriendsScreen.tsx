@@ -4,6 +4,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { db } from '../db/schema';
 import { matchNameToContact } from '../services/settlements';
 import ContactPickerModal, { PickedContact } from '../components/ContactPickerModal';
+import AddExpenseModal from '../components/AddExpenseModal';
 
 interface PendingMatch {
   id: string;
@@ -23,6 +24,8 @@ const FriendsScreen = () => {
   const [pending, setPending] = useState<PendingMatch[]>([]);
   const [friends, setFriends] = useState<FriendBalance[]>([]);
   const [matchingTxn, setMatchingTxn] = useState<PendingMatch | null>(null);
+  const [addingExpense, setAddingExpense] = useState(false);
+  const [expenseContact, setExpenseContact] = useState<PickedContact | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -71,9 +74,24 @@ const FriendsScreen = () => {
     loadData();
   };
 
+  // FriendsScreen's own list only shows contacts with existing history (a
+  // split, settlement, or alias — see the UNION in loadData above), so a
+  // brand-new friend has no row to tap into and reach FriendDetailScreen's
+  // own "+" button. Picking a contact here first is what makes it possible
+  // to start a ledger with someone you've never split anything with yet.
+  const handlePickForExpense = (contact: PickedContact) => {
+    setAddingExpense(false);
+    setExpenseContact(contact);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>Friends</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>Friends</Text>
+        <TouchableOpacity style={styles.addButton} onPress={() => setAddingExpense(true)}>
+          <Text style={styles.addButtonText}>+</Text>
+        </TouchableOpacity>
+      </View>
 
       {pending.length > 0 && (
         <View style={styles.pendingSection}>
@@ -122,13 +140,48 @@ const FriendsScreen = () => {
         onCancel={() => setMatchingTxn(null)}
         onSelect={handlePick}
       />
+
+      <ContactPickerModal
+        visible={addingExpense}
+        title="Who is this expense for?"
+        onCancel={() => setAddingExpense(false)}
+        onSelect={handlePickForExpense}
+      />
+
+      <AddExpenseModal
+        visible={!!expenseContact}
+        contactId={expenseContact?.id ?? null}
+        contactName={expenseContact?.name ?? null}
+        onClose={() => setExpenseContact(null)}
+        onSaved={() => {
+          setExpenseContact(null);
+          loadData();
+        }}
+      />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#333', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  title: { fontSize: 24, fontWeight: 'bold', color: '#333' },
+  addButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addButtonText: { color: '#fff', fontSize: 20, fontWeight: '600', lineHeight: 22 },
   sectionHeader: { fontSize: 13, fontWeight: '700', color: '#999', textTransform: 'uppercase', marginBottom: 8 },
   pendingSection: { backgroundColor: '#fff8e1', marginHorizontal: 16, marginBottom: 8, padding: 14, borderRadius: 10 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },

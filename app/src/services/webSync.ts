@@ -226,3 +226,60 @@ export const syncSplitsFromServer = async (): Promise<{ imported: number }> => {
   if (latestCreatedAt) await setSetting(LAST_SPLITS_SYNC_KEY, latestCreatedAt);
   return { imported };
 };
+
+/**
+ * Pushes every local split up to the server, so the web's own Friends page
+ * (built from the server's splits/settlements tables) reflects the same
+ * picture as the phone — otherwise it would only ever see splits created
+ * directly on the web, missing everything from SMS-matching or the app's
+ * own "+" manual-expense flow. A full push, not a delta: there's no
+ * updated_at tracked locally on splits to diff against, and the dataset is
+ * small enough (a personal app's lifetime split history, not a growing
+ * transaction log) that resending all of it each sync is cheap. The
+ * server merges by id (see /api/splits/sync) rather than replacing its own
+ * table, so this can't clobber anything authored there.
+ */
+export const syncSplitsToServer = async (): Promise<{ count: number }> => {
+  const baseUrl = await getServerUrl();
+  if (!baseUrl) throw new Error('No server URL configured.');
+
+  const res = await db.execute(
+    `SELECT s.id, s.transaction_id, s.contact_id, s.contact_name, s.amount_owed, s.settled,
+            t.date as txn_date, t.merchant_raw as txn_merchant, t.amount as txn_amount
+     FROM splits s LEFT JOIN transactions t ON t.id = s.transaction_id`
+  );
+  const rows: any = res.rows;
+  const splits = rows?._array || rows || [];
+  if (splits.length === 0) return { count: 0 };
+
+  const result = await fetch(`${baseUrl}/api/splits/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ splits }),
+  });
+  if (!result.ok) throw new Error(`Server responded with ${result.status}`);
+  return { count: splits.length };
+};
+
+/**
+ * Pushes every local settlement (a friend's payment history) up to the
+ * server for the same reason splits do — the web Friends page otherwise
+ * has no way to know a debt was paid back via SMS-matching on the phone.
+ */
+export const syncSettlementsToServer = async (): Promise<{ count: number }> => {
+  const baseUrl = await getServerUrl();
+  if (!baseUrl) throw new Error('No server URL configured.');
+
+  const res = await db.execute('SELECT * FROM settlements');
+  const rows: any = res.rows;
+  const settlements = rows?._array || rows || [];
+  if (settlements.length === 0) return { count: 0 };
+
+  const result = await fetch(`${baseUrl}/api/settlements/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settlements }),
+  });
+  if (!result.ok) throw new Error(`Server responded with ${result.status}`);
+  return { count: settlements.length };
+};

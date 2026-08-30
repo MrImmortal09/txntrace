@@ -120,6 +120,16 @@ export const applySettlement = async (
     ]
   );
 
+  // Identifying this credit as a payment from a known contact *is* reviewing
+  // it — there's nothing left to decide on Daily once it's been applied to
+  // a friend's balance. Every caller (a fresh match, auto-matching on
+  // ingestion, and the re-parse tool) goes through here, so fixing it once
+  // in this shared spot covers all three instead of needing it at each.
+  await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
+    new Date().toISOString(),
+    transactionId,
+  ]);
+
   return { matchedSplitId: firstMatchedId };
 };
 
