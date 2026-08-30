@@ -1,16 +1,26 @@
 """
-Generic bank-statement parsing: CSV, XLSX/legacy XLS, and PDF.
+Bank-statement parsing: CSV, XLSX/legacy XLS, and PDF.
 
-Unlike the SMS parsers in the mobile app (app/src/parsers/sms/*.ts), there are
-no bank-specific templates here — this works off column-name and layout
-heuristics, tuned against real statement exports (SBI card PDF, HDFC card PDF,
-HDFC pipe-delimited CSV, an HDFC "xls" that's secretly modern xlsx, and a real
-bank-account history export in genuine legacy binary xls via JasperReports).
-Every quirk handled below — the header row sitting 15+ rows deep, comma-
-separated dates, amounts with an embedded "Dr./Cr." suffix, a single
-Debit/Credit indicator column instead of two amount columns, a non-comma CSV
-delimiter — came from one of those real files, not guesswork. A new bank
-format may still need a new quirk added here.
+CSV/XLSX go through one generic, column-name-driven heuristic (rows_from_dicts)
+— tuned against real statement exports (HDFC pipe-delimited CSV, an HDFC "xls"
+that's secretly modern xlsx, a real bank-account history export in genuine
+legacy binary xls via JasperReports). Every quirk handled there — the header
+row sitting 15+ rows deep, comma-separated dates, amounts with an embedded
+"Dr./Cr." suffix, a single Debit/Credit indicator column instead of two amount
+columns, a non-comma CSV delimiter — came from one of those real files, not
+guesswork.
+
+PDF is different: a generic per-line text heuristic (_parse_pdf_generic) is
+the fallback, tuned against SBI/HDFC card statements and a plain account-
+history export, but a real statement's table layout can be specific enough
+(IDFC's multi-line-wrapped, vertically-centered Details column) that no
+generic heuristic parses it reliably — same reason the mobile app's SMS
+parsers (app/src/parsers/sms/*.ts) are per-bank rather than one generic
+regex. parse_pdf detects the bank from page-1 text and dispatches to a
+dedicated coordinate-based parser (parse_pdf_idfc) when one exists, falling
+back to the generic heuristic otherwise. A new bank's PDF may need a quirk
+added to the generic path, or its own dedicated parser if the layout is
+distinctive enough to warrant one.
 """
 
 import csv
@@ -347,76 +357,157 @@ def _clean_pdf_description(text: str, date_match: "re.Match[str] | None", amount
     return description or None
 
 
-def parse_pdf(raw_bytes: bytes) -> list[dict[str, Any]]:
+IDFC_MARKER_RE = re.compile(r"idfc\s*first", re.IGNORECASE)
+WORD_DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
+
+# Column x-ranges for IDFC's "Your Transactions" table, read off real word
+# coordinates (page.extract_words()) from an actual statement — Date/EMI/
+# Forex/Amount all sit on one shared baseline per transaction, but a
+# multi-line "Details" cell is vertically *centered* across that baseline,
+# so its wrapped lines land a few points above and below it. That's what
+# breaks a plain top-to-bottom text reading: extract_text() emits the
+# wrapped line *before* the baseline as its own line, then the baseline
+# line, then the wrapped line *after* — interleaved with no reliable text
+# marker (it doesn't always break at a comma, e.g. "...LUCKNOW" / "CITY").
+# Reconstructing by x/y position instead of text order sidesteps that
+# entirely, at the cost of being specific to this one bank's layout.
+IDFC_COL_DATE = (0, 95)
+IDFC_COL_DETAILS = (95, 320)
+IDFC_COL_EMI = (320, 385)
+IDFC_COL_FOREX = (385, 476)
+IDFC_COL_AMOUNT = (476, 10_000)
+IDFC_SAMELINE_TOLERANCE = 3
+IDFC_DETAILS_TOLERANCE = 9  # covers the ~5-6pt wrap offset, well under the ~14-15pt gap to an adjacent transaction
+
+
+def _idfc_words_in(words: list[dict], col: tuple[float, float], anchor_top: float, tolerance: float) -> str:
+    matches = [
+        w for w in words
+        if col[0] <= w["x0"] < col[1] and abs(w["top"] - anchor_top) <= tolerance
+    ]
+    matches.sort(key=lambda w: (round(w["top"]), w["x0"]))
+    return " ".join(w["text"] for w in matches)
+
+
+def parse_pdf_idfc(pdf) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
-        for page in pdf.pages:
-            table = page.extract_table()
-            if table and len(table) > 1:
-                headers = [str(h).strip() if h else f"col_{i}" for i, h in enumerate(table[0])]
-                rows = [dict(zip(headers, row)) for row in table[1:]]
-                results.extend(rows_from_dicts(rows))
+    for page in pdf.pages:
+        words = page.extract_words()
+        date_anchors = [w for w in words if IDFC_COL_DATE[0] <= w["x0"] < IDFC_COL_DATE[1] and WORD_DATE_RE.match(w["text"])]
+        for anchor in date_anchors:
+            top = anchor["top"]
+            amount_text = _idfc_words_in(words, IDFC_COL_AMOUNT, top, IDFC_SAMELINE_TOLERANCE)
+            amount_matches = LINE_AMOUNT_RE.findall(amount_text)
+            if not amount_matches:
+                continue
+            amount = _parse_amount(amount_matches[0])
+            if amount is None:
+                continue
+            date_iso = _parse_date(anchor["text"])
+            if not date_iso:
                 continue
 
-            # No detectable table on this page — fall back to a per-line
-            # heuristic. A line needs a decimal amount to count; a line with
-            # no date of its own (e.g. a tax/fee line directly under a dated
-            # transaction) inherits the most recently seen date rather than
-            # being dropped, since real statements do this often — so the
-            # date scan runs on *every* line regardless of whether that same
-            # line has an amount, or a date-only line (the first half of a
-            # merchant name wrapped onto two lines) would never get the
-            # chance to update it before the amount-bearing line right after
-            # needs it. That same wrap also means a dateless, amountless
-            # line right before an amount line is itself the merchant name's
-            # continuation, not noise — held in pending_prefix and prepended
-            # once the amount line completes the row.
-            text = page.extract_text() or ""
-            last_date_iso: str | None = None
-            pending_prefix = ""
-            for line in text.splitlines():
-                date_match = LINE_DATE_RE.search(line)
+            details = _idfc_words_in(words, IDFC_COL_DETAILS, top, IDFC_DETAILS_TOLERANCE).strip(" ,")
+            emi = _idfc_words_in(words, IDFC_COL_EMI, top, IDFC_SAMELINE_TOLERANCE)
+            forex = _idfc_words_in(words, IDFC_COL_FOREX, top, IDFC_SAMELINE_TOLERANCE)
+            direction = "credit" if "cr" in amount_text.lower() else "debit"
+
+            raw: dict[str, Any] = {"details": details}
+            if emi:
+                raw["emi_eligibility"] = emi
+            if forex:
+                raw["forex"] = forex
+
+            results.append(
+                {
+                    "date": date_iso,
+                    "merchant": details or None,
+                    "amount": amount,
+                    "type": direction,
+                    "balance": None,
+                    "raw": raw,
+                }
+            )
+    return results
+
+
+def parse_pdf(raw_bytes: bytes) -> list[dict[str, Any]]:
+    with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
+        first_page_text = pdf.pages[0].extract_text() or "" if pdf.pages else ""
+        if IDFC_MARKER_RE.search(first_page_text):
+            return parse_pdf_idfc(pdf)
+        return _parse_pdf_generic(pdf)
+
+
+def _parse_pdf_generic(pdf) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for page in pdf.pages:
+        table = page.extract_table()
+        if table and len(table) > 1:
+            headers = [str(h).strip() if h else f"col_{i}" for i, h in enumerate(table[0])]
+            rows = [dict(zip(headers, row)) for row in table[1:]]
+            results.extend(rows_from_dicts(rows))
+            continue
+
+        # No detectable table on this page — fall back to a per-line
+        # heuristic. A line needs a decimal amount to count; a line with
+        # no date of its own (e.g. a tax/fee line directly under a dated
+        # transaction) inherits the most recently seen date rather than
+        # being dropped, since real statements do this often — so the
+        # date scan runs on *every* line regardless of whether that same
+        # line has an amount, or a date-only line (the first half of a
+        # merchant name wrapped onto two lines) would never get the
+        # chance to update it before the amount-bearing line right after
+        # needs it. That same wrap also means a dateless, amountless
+        # line right before an amount line is itself the merchant name's
+        # continuation, not noise — held in pending_prefix and prepended
+        # once the amount line completes the row.
+        text = page.extract_text() or ""
+        last_date_iso: str | None = None
+        pending_prefix = ""
+        for line in text.splitlines():
+            date_match = LINE_DATE_RE.search(line)
+            if date_match:
+                parsed = _parse_date(date_match.group(1))
+                if parsed:
+                    last_date_iso = parsed
+
+            amount_matches = LINE_AMOUNT_RE.findall(line)
+            if not amount_matches:
                 if date_match:
-                    parsed = _parse_date(date_match.group(1))
-                    if parsed:
-                        last_date_iso = parsed
+                    pending_prefix = line.replace(date_match.group(1), "").strip()
+                elif pending_prefix:
+                    pending_prefix = f"{pending_prefix} {line.strip()}".strip()
+                continue
+            if not last_date_iso:
+                continue
 
-                amount_matches = LINE_AMOUNT_RE.findall(line)
-                if not amount_matches:
-                    if date_match:
-                        pending_prefix = line.replace(date_match.group(1), "").strip()
-                    elif pending_prefix:
-                        pending_prefix = f"{pending_prefix} {line.strip()}".strip()
-                    continue
-                if not last_date_iso:
-                    continue
+            combined_text = f"{pending_prefix} {line}".strip() if pending_prefix else line
+            pending_prefix = ""
 
-                combined_text = f"{pending_prefix} {line}".strip() if pending_prefix else line
-                pending_prefix = ""
+            is_forex_line = len(amount_matches) > 1 and bool(FOREX_AMOUNT_RE.search(line))
+            if len(amount_matches) > 1 and not is_forex_line:
+                amount_str = amount_matches[0]
+                balance = _parse_amount(amount_matches[-1])
+            else:
+                # Single amount, or a forex line where the real charge is
+                # always the last figure on the line.
+                amount_str = amount_matches[-1]
+                balance = None
+            amount = _parse_amount(amount_str)
+            if amount is None:
+                continue
 
-                is_forex_line = len(amount_matches) > 1 and bool(FOREX_AMOUNT_RE.search(line))
-                if len(amount_matches) > 1 and not is_forex_line:
-                    amount_str = amount_matches[0]
-                    balance = _parse_amount(amount_matches[-1])
-                else:
-                    # Single amount, or a forex line where the real charge is
-                    # always the last figure on the line.
-                    amount_str = amount_matches[-1]
-                    balance = None
-                amount = _parse_amount(amount_str)
-                if amount is None:
-                    continue
-
-                results.append(
-                    {
-                        "date": last_date_iso,
-                        "merchant": _clean_pdf_description(combined_text, date_match, amount_matches),
-                        "amount": amount,
-                        "type": _line_direction(combined_text, amount_str),
-                        "balance": balance,
-                        "raw": {"line": combined_text},
-                    }
-                )
+            results.append(
+                {
+                    "date": last_date_iso,
+                    "merchant": _clean_pdf_description(combined_text, date_match, amount_matches),
+                    "amount": amount,
+                    "type": _line_direction(combined_text, amount_str),
+                    "balance": balance,
+                    "raw": {"line": combined_text},
+                }
+            )
     return results
 
 
