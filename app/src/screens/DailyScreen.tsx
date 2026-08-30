@@ -100,9 +100,6 @@ const DailyScreen = () => {
                     <TouchableOpacity style={[styles.splitButton, { backgroundColor: colors.primary }]} onPress={() => setSplitting(item)}>
                       <Text style={styles.actionButtonText}>Split</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.mineButton, { backgroundColor: colors.success }]} onPress={() => confirmMine(item)}>
-                      <Text style={styles.actionButtonText}>Mine</Text>
-                    </TouchableOpacity>
                   </View>
                 </View>
               </View>
@@ -158,7 +155,6 @@ const styles = StyleSheet.create({
   amount: { fontSize: 15, fontWeight: 'bold' },
   actions: { flexDirection: 'row', gap: 6 },
   splitButton: { borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
-  mineButton: { borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
   actionButtonText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });
 

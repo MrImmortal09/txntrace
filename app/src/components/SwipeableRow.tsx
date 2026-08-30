@@ -35,6 +35,15 @@ const SwipeableRow = ({ onSwipeRight, children }: Props) => {
           Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
         }
       },
+      // A release is a clean finger-lift; a *terminate* is the gesture being
+      // taken away mid-drag (most commonly the FlatList's own scroll
+      // responder grabbing it). Without handling this too, a swipe that
+      // gets interrupted before crossing the threshold is left frozen at
+      // its last dragged offset forever, since only onPanResponderRelease
+      // was ever springing it back to 0.
+      onPanResponderTerminate: () => {
+        Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+      },
     })
   ).current;
 

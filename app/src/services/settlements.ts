@@ -60,15 +60,17 @@ export const matchNameToContact = async (
 };
 
 /**
- * Applies an incoming payment to a contact's oldest open debt.
- *
- * Settles the oldest unsettled split whose amount_owed the payment fully
- * covers, rather than trying to split one payment across several debts or
- * handle partial payments — `settled` is a boolean, not a running balance, so
- * a payment smaller than the oldest open split is left unmatched for the user
- * to reconcile by hand instead of guessing which debt it was meant to cover.
- * The settlement itself is always recorded, even when nothing matches, so the
- * money isn't silently dropped from the friend's history.
+ * Applies an incoming payment to a contact's open debts, oldest first,
+ * tracking a running balance rather than requiring one payment to cover a
+ * split in full. A payment smaller than what's owed now reduces amount_owed
+ * instead of being left unmatched; leftover beyond what the oldest split
+ * needs rolls forward into the next-oldest one, so several partial payments
+ * (₹10, then ₹90 against a ₹100 debt) still add up to fully settling it.
+ * This can only run after the user has explicitly matched a payment to a
+ * contact in the first place, so applying it — even partially — to their
+ * known debt is exactly what that match means, not a guess. A contact with
+ * no open splits at all still gets the settlement recorded, just with no
+ * matched split, so the money isn't silently dropped from their history.
  */
 export const applySettlement = async (
   contactId: string,
@@ -79,16 +81,28 @@ export const applySettlement = async (
   const openSplits = await db.execute(
     `SELECT s.id, s.amount_owed FROM splits s
      JOIN transactions t ON t.id = s.transaction_id
-     WHERE s.contact_id = ? AND s.settled = 0 AND s.amount_owed <= ?
-     ORDER BY t.date ASC LIMIT 1`,
-    [contactId, amount]
+     WHERE s.contact_id = ? AND s.settled = 0
+     ORDER BY t.date ASC`,
+    [contactId]
   );
   const rows: any = openSplits.rows;
   const arr = rows?._array || rows || [];
-  const match = arr[0] || null;
 
-  if (match) {
-    await db.execute('UPDATE splits SET settled = 1 WHERE id = ?', [match.id]);
+  let remaining = amount;
+  let firstMatchedId: string | null = null;
+
+  for (const split of arr) {
+    if (remaining <= 0) break;
+    firstMatchedId = firstMatchedId ?? split.id;
+
+    if (remaining >= split.amount_owed) {
+      remaining = Number((remaining - split.amount_owed).toFixed(2));
+      await db.execute('UPDATE splits SET settled = 1, amount_owed = 0 WHERE id = ?', [split.id]);
+    } else {
+      const newOwed = Number((split.amount_owed - remaining).toFixed(2));
+      remaining = 0;
+      await db.execute('UPDATE splits SET amount_owed = ? WHERE id = ?', [newOwed, split.id]);
+    }
   }
 
   await db.execute(
@@ -100,13 +114,13 @@ export const applySettlement = async (
       contactName,
       amount,
       transactionId,
-      match?.id ?? null,
+      firstMatchedId,
       new Date().toISOString(),
       new Date().toISOString(),
     ]
   );
 
-  return { matchedSplitId: match?.id ?? null };
+  return { matchedSplitId: firstMatchedId };
 };
 
 /**

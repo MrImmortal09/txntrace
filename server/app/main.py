@@ -202,7 +202,10 @@ def api_list_contacts():
 async def api_create_splits(txn_id: str, payload: dict[str, Any]):
     """Create-once, like the phone's own split modal: a transaction is
     split a single time, not repeatedly edited, so there's no update path
-    to keep in sync — only a 409 if it's already split."""
+    to keep in sync — only a 409 if it's already split. Also marks the
+    transaction reviewed, exactly like the phone's own split modal does in
+    the same action — otherwise a transaction split from the web never
+    leaves the phone's Daily (pending review) list."""
     entries = payload.get("splits") or []
     if not entries:
         raise HTTPException(status_code=400, detail="No splits provided.")
@@ -225,6 +228,9 @@ async def api_create_splits(txn_id: str, payload: dict[str, Any]):
                 (split_id, txn_id, entry.get("contact_id"), entry.get("contact_name"), entry.get("amount_owed"), now),
             )
             created.append(split_id)
+        conn.execute(
+            "UPDATE transactions SET reviewed = 1, updated_at = %s WHERE id = %s", (now, txn_id)
+        )
     return {"created": created}
 
 
@@ -331,3 +337,19 @@ def api_export_transactions(since: str | None = Query(default=None)):
         else:
             rows = conn.execute("SELECT * FROM transactions ORDER BY updated_at ASC").fetchall()
     return {"transactions": [dict(r) for r in rows]}
+
+
+@app.post("/api/admin/clear-db")
+async def api_clear_db(payload: dict[str, Any]):
+    """Wipes every table — transactions, cards, contacts, splits. There's no
+    auth on this server at all, so the confirm phrase isn't a security
+    boundary, just a guard against firing this by accident (a stray retry,
+    a misclick) given it's irreversible and there's no undo."""
+    if payload.get("confirm") != "CLEAR":
+        raise HTTPException(status_code=400, detail='Send {"confirm": "CLEAR"} to proceed.')
+    with get_db() as conn:
+        conn.execute("DELETE FROM splits")
+        conn.execute("DELETE FROM contacts")
+        conn.execute("DELETE FROM cards")
+        conn.execute("DELETE FROM transactions")
+    return {"cleared": True}

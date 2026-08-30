@@ -91,6 +91,17 @@
   {% endfor %}
 </div>
 
+<div class="mt-10 rounded-2xl border border-debit/30 bg-red-50 p-6">
+  <h2 class="text-sm font-bold uppercase tracking-wide text-debit">Danger zone</h2>
+  <p class="mt-2 text-sm text-gray-600">
+    Permanently deletes every transaction, card, contact, and split on the server. Cannot be undone —
+    this does not touch anything already synced to your phone.
+  </p>
+  <button id="clear-db-btn" class="mt-4 rounded-lg border border-debit px-4 py-2 text-sm font-semibold text-debit hover:bg-debit hover:text-white">
+    Clear all server data
+  </button>
+</div>
+
 <script>
   const NEW_TYPE = document.getElementById('new-type');
   const NEW_LIMIT_WRAP = document.getElementById('new-limit-wrap');
@@ -137,6 +148,28 @@
       await fetch(`/api/cards/${btn.dataset.id}`, { method: 'DELETE' });
       location.reload();
     });
+  });
+
+  document.getElementById('clear-db-btn').addEventListener('click', async () => {
+    const typed = prompt('This deletes every transaction, card, contact, and split on the server, permanently. Type CLEAR to confirm.');
+    if (typed !== 'CLEAR') return;
+
+    const btn = document.getElementById('clear-db-btn');
+    btn.disabled = true;
+    btn.textContent = 'Clearing…';
+    try {
+      const res = await fetch('/api/admin/clear-db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'CLEAR' }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Failed to clear.');
+      location.reload();
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+      btn.textContent = 'Clear all server data';
+    }
   });
 </script>
 {% endblock %}
