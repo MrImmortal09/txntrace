@@ -106,3 +106,11 @@ def init_db() -> None:
         conn.execute(CARDS_SCHEMA)
         conn.execute(CONTACTS_SCHEMA)
         conn.execute(SPLITS_SCHEMA)
+        # Added after the initial table, so existing deployments need an
+        # explicit migration rather than picking it up from CREATE TABLE IF
+        # NOT EXISTS (a no-op once the table already exists). Lets an edit
+        # made on the web (e.g. a note) be told apart from a row's original
+        # import time, which is what makes last-write-wins sync possible —
+        # see /api/transactions/export and the mobile app's syncFromServer.
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS updated_at TEXT")
+        conn.execute("UPDATE transactions SET updated_at = created_at WHERE updated_at IS NULL")

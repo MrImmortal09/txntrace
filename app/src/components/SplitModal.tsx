@@ -122,7 +122,10 @@ const SplitModal = ({ visible, transactionId, amount, onClose, onSaved }: Props)
           [`split_${Date.now()}_${Math.random().toString(36).slice(2)}`, transactionId, split.id, split.name, split.amountOwed]
         );
       }
-      await db.execute('UPDATE transactions SET reviewed = 1 WHERE id = ?', [transactionId]);
+      await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
+        new Date().toISOString(),
+        transactionId,
+      ]);
     } catch (error) {
       console.error('Failed to save split:', error);
     }

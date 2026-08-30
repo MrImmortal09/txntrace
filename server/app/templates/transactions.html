@@ -15,7 +15,6 @@
         <th class="px-4 py-3">Bank</th>
         <th class="px-4 py-3">Source</th>
         <th class="px-4 py-3 text-right">Amount</th>
-        <th class="px-4 py-3">Split</th>
       </tr>
     </thead>
     <tbody class="divide-y divide-gray-100">
@@ -38,12 +37,6 @@
         <td class="cursor-pointer px-4 py-3 text-right font-semibold {{ 'text-credit' if t.type == 'credit' else 'text-debit' }}" onclick="openDetail('{{ t.id }}')">
           {{ '+' if t.type == 'credit' else '-' }}₹{{ '%.2f' | format(t.amount or 0) }}
         </td>
-        <td class="px-4 py-3">
-          <button onclick="openSplitModal('{{ t.id }}')"
-                  class="rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 hover:border-brand hover:text-brand">
-            {% if t.splits %}{{ t.splits | length }} split{{ 's' if t.splits | length != 1 else '' }}{% else %}Split{% endif %}
-          </button>
-        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -55,7 +48,10 @@
 </div>
 {% endif %}
 
-<!-- Detail modal -->
+<!-- Detail modal — also where a note gets edited (synced down to the phone
+     via updated_at, see /api/transactions/{id}) and where a split gets
+     started, so this one popup covers everything about a transaction
+     instead of splitting those actions across separate buttons. -->
 <div id="detail-overlay" class="fixed inset-0 z-10 hidden items-center justify-center bg-black/40 p-4" onclick="closeDetail(event)">
   <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onclick="event.stopPropagation()">
     <div class="flex items-start justify-between">
@@ -64,6 +60,21 @@
     </div>
     <p id="detail-amount" class="mt-1 text-2xl font-bold"></p>
     <dl id="detail-fields" class="mt-5 space-y-2 text-sm"></dl>
+
+    <div class="mt-5 border-t border-gray-100 pt-4">
+      <label class="text-xs font-semibold uppercase tracking-wide text-gray-400">Note</label>
+      <textarea id="detail-note" rows="2" placeholder="Add a note…"
+                class="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"></textarea>
+      <button onclick="saveNote()" id="detail-note-save"
+              class="mt-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-600">
+        Save note
+      </button>
+    </div>
+
+    <button onclick="closeDetail(); openSplitModal(currentDetailId);" id="detail-split-btn"
+            class="mt-4 w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:border-brand hover:text-brand">
+      Split this transaction
+    </button>
   </div>
 </div>
 
@@ -85,15 +96,20 @@
 <script>const CONTACTS = {{ contacts | tojson }};</script>
 <script>const CONTACT_RECENCY = {{ recency | tojson }};</script>
 <script>
+  // note is deliberately excluded here — it has its own editable field
+  // below the read-only ones, not a plain <dt>/<dd> row.
   const FIELD_LABELS = {
-    date: 'Date', bank: 'Bank', type: 'Type', category: 'Category', note: 'Note',
+    date: 'Date', bank: 'Bank', type: 'Type', category: 'Category',
     source: 'Source', reference: 'Reference', account_last4: 'Account', balance: 'Balance',
     sender: 'Sender', sms_body: 'Message', created_at: 'Imported at', reviewed: 'Reviewed',
   };
 
+  let currentDetailId = null;
+
   function openDetail(id) {
     const txn = TRANSACTIONS.find((t) => t.id === id);
     if (!txn) return;
+    currentDetailId = id;
 
     document.getElementById('detail-merchant').textContent = txn.merchant_raw || 'Unknown';
     const amountEl = document.getElementById('detail-amount');
@@ -113,6 +129,15 @@
       );
     });
 
+    document.getElementById('detail-note').value = txn.note || '';
+    const noteBtn = document.getElementById('detail-note-save');
+    noteBtn.disabled = false;
+    noteBtn.textContent = 'Save note';
+
+    const splits = txn.splits || [];
+    document.getElementById('detail-split-btn').textContent =
+      splits.length > 0 ? `View split (${splits.length})` : 'Split this transaction';
+
     document.getElementById('detail-overlay').classList.remove('hidden');
     document.getElementById('detail-overlay').classList.add('flex');
   }
@@ -120,6 +145,34 @@
   function closeDetail(e) {
     document.getElementById('detail-overlay').classList.add('hidden');
     document.getElementById('detail-overlay').classList.remove('flex');
+  }
+
+  async function saveNote() {
+    const txn = TRANSACTIONS.find((t) => t.id === currentDetailId);
+    if (!txn) return;
+    const note = document.getElementById('detail-note').value;
+    const btn = document.getElementById('detail-note-save');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      const res = await fetch(`/api/transactions/${currentDetailId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to save note.');
+      txn.note = note;
+      btn.textContent = 'Saved ✓';
+      setTimeout(() => {
+        btn.textContent = 'Save note';
+        btn.disabled = false;
+      }, 1200);
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+      btn.textContent = 'Save note';
+    }
   }
 
   // --- Split modal ---

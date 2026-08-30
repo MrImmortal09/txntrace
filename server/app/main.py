@@ -271,8 +271,8 @@ async def api_commit_transactions(payload: dict[str, Any]):
             txn_id = _row_id(bank, row)
             cur = conn.execute(
                 """INSERT INTO transactions
-                   (id, bank, amount, type, merchant_raw, date, source, category, note, created_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, 'statement', %s, %s, %s)
+                   (id, bank, amount, type, merchant_raw, date, source, category, note, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, 'statement', %s, %s, %s, %s)
                    ON CONFLICT (id) DO NOTHING""",
                 (
                     txn_id,
@@ -284,10 +284,29 @@ async def api_commit_transactions(payload: dict[str, Any]):
                     row.get("category"),
                     row.get("note"),
                     now,
+                    now,
                 ),
             )
             inserted += cur.rowcount
     return {"imported": inserted, "skipped_duplicates": len(rows) - inserted}
+
+
+@app.put("/api/transactions/{txn_id}")
+async def api_update_transaction_note(txn_id: str, payload: dict[str, Any]):
+    """Edits a transaction's note from the web. updated_at (not created_at,
+    which never changes) is what /api/transactions/export keys its delta
+    sync on, so this is what makes the edit actually reach the phone on its
+    next sync rather than being silently skipped as "nothing new"."""
+    note = payload.get("note")
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE transactions SET note = %s, updated_at = %s WHERE id = %s",
+            (note, now, txn_id),
+        )
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Transaction not found.")
+    return {"updated": True, "updated_at": now}
 
 
 @app.get("/api/transactions")
@@ -299,12 +318,16 @@ def api_list_transactions():
 
 @app.get("/api/transactions/export")
 def api_export_transactions(since: str | None = Query(default=None)):
-    """Pull-sync endpoint for the mobile app: everything created after `since` (ISO 8601)."""
+    """Pull-sync endpoint for the mobile app: everything *changed* (created
+    or edited — e.g. a note added on the web) after `since` (ISO 8601).
+    Keyed on updated_at rather than created_at, or an edit to a row the
+    phone already has would never be picked up, since its created_at never
+    changes."""
     with get_db() as conn:
         if since:
             rows = conn.execute(
-                "SELECT * FROM transactions WHERE created_at > %s ORDER BY created_at ASC", (since,)
+                "SELECT * FROM transactions WHERE updated_at > %s ORDER BY updated_at ASC", (since,)
             ).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM transactions ORDER BY created_at ASC").fetchall()
+            rows = conn.execute("SELECT * FROM transactions ORDER BY updated_at ASC").fetchall()
     return {"transactions": [dict(r) for r in rows]}

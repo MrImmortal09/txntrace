@@ -28,6 +28,18 @@ export const setupDatabase = async () => {
     );
   `);
 
+  // CREATE TABLE IF NOT EXISTS is a no-op on a device that already has this
+  // table from before this column existed, so it needs an explicit
+  // migration — wrapped in try/catch since SQLite has no ADD COLUMN IF NOT
+  // EXISTS and this needs to stay a harmless no-op on every later launch.
+  // Lets a note added on the web (updated_at newer than what the phone has)
+  // be told apart from one only ever set at import time — see webSync.ts.
+  try {
+    await db.execute(`ALTER TABLE transactions ADD COLUMN updated_at TEXT;`);
+  } catch (error) {
+    // Already migrated.
+  }
+
   // Mirrors the server's `cards` table (server/app/db.py) — the phone matches
   // SMS against this locally so ingestion stays network-free, but the rows
   // themselves are configured on the web app and pulled down via /api/cards/export.

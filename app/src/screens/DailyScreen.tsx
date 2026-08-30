@@ -42,7 +42,10 @@ const DailyScreen = () => {
   const confirmMine = async (txn: Transaction) => {
     setTxns(prev => prev.filter(t => t.id !== txn.id));
     try {
-      await db.execute('UPDATE transactions SET reviewed = 1 WHERE id = ?', [txn.id]);
+      await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
+        new Date().toISOString(),
+        txn.id,
+      ]);
     } catch (error) {
       console.error('Failed to confirm transaction:', error);
       load();

@@ -32,6 +32,7 @@ interface RemoteTransaction {
   note: string | null;
   reviewed: number;
   created_at: string;
+  updated_at: string;
   reference: string | null;
   account_last4: string | null;
   balance: number | null;
@@ -40,10 +41,14 @@ interface RemoteTransaction {
 }
 
 /**
- * Pulls whatever the server hasn't handed us yet, keyed by created_at rather
- * than re-fetching everything each time — the server can accumulate a lot of
- * statement history, and INSERT OR IGNORE alone would still mean re-sending
- * the whole table over the network on every sync.
+ * Pulls whatever changed on the server since last time — keyed by
+ * updated_at rather than created_at, so an edit to a row the phone already
+ * has (e.g. a note added on the web) is picked up too, not just brand-new
+ * rows. That also means this can no longer be a plain INSERT OR IGNORE: an
+ * existing local row needs updating when the server's copy is newer, but
+ * must NOT be clobbered when the phone's own copy is newer (e.g. reviewed
+ * locally after the server's last-known state) — hence the upsert's WHERE,
+ * comparing timestamps instead of blindly preferring either side.
  */
 export const syncFromServer = async (): Promise<{ imported: number }> => {
   const baseUrl = await getServerUrl();
@@ -58,13 +63,31 @@ export const syncFromServer = async (): Promise<{ imported: number }> => {
   const remote: RemoteTransaction[] = data.transactions || [];
 
   let imported = 0;
-  let latestCreatedAt = since;
+  let latestUpdatedAt = since;
 
   for (const txn of remote) {
+    const updatedAt = txn.updated_at || txn.created_at;
     const result = await db.execute(
-      `INSERT OR IGNORE INTO transactions
-        (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, reference, account_last4, balance, sender, sms_body)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO transactions
+        (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         bank = excluded.bank,
+         amount = excluded.amount,
+         type = excluded.type,
+         merchant_raw = excluded.merchant_raw,
+         date = excluded.date,
+         source = excluded.source,
+         category = excluded.category,
+         note = excluded.note,
+         reviewed = excluded.reviewed,
+         updated_at = excluded.updated_at,
+         reference = excluded.reference,
+         account_last4 = excluded.account_last4,
+         balance = excluded.balance,
+         sender = excluded.sender,
+         sms_body = excluded.sms_body
+       WHERE excluded.updated_at > COALESCE(transactions.updated_at, transactions.created_at, '')`,
       [
         txn.id,
         txn.bank,
@@ -77,6 +100,7 @@ export const syncFromServer = async (): Promise<{ imported: number }> => {
         txn.note,
         txn.reviewed,
         txn.created_at,
+        updatedAt,
         txn.reference,
         txn.account_last4,
         txn.balance,
@@ -85,10 +109,10 @@ export const syncFromServer = async (): Promise<{ imported: number }> => {
       ]
     );
     imported += result.rowsAffected;
-    if (!latestCreatedAt || txn.created_at > latestCreatedAt) latestCreatedAt = txn.created_at;
+    if (!latestUpdatedAt || updatedAt > latestUpdatedAt) latestUpdatedAt = updatedAt;
   }
 
-  if (latestCreatedAt) await setSetting(LAST_SYNC_KEY, latestCreatedAt);
+  if (latestUpdatedAt) await setSetting(LAST_SYNC_KEY, latestUpdatedAt);
   return { imported };
 };
 

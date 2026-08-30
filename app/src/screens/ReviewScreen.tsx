@@ -77,8 +77,8 @@ const ReviewScreen = () => {
 
     try {
       await db.execute(
-        'UPDATE transactions SET category = ?, note = ?, reviewed = 1 WHERE id = ?',
-        [selectedCategoryId, note, txn.id]
+        'UPDATE transactions SET category = ?, note = ?, reviewed = 1, updated_at = ? WHERE id = ?',
+        [selectedCategoryId, note, new Date().toISOString(), txn.id]
       );
 
       // Save splits if any
