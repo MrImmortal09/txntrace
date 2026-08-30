@@ -75,6 +75,43 @@ sudo systemctl status txntrace   # should show "active (running)"
 
 From here, `http://<vm-public-ip>:8000` should be reachable — enter that in the mobile app's Settings → Sync from Web.
 
+### 5. Switch to HTTPS with a real domain (recommended)
+
+Plain HTTP to a raw IP works, but some networks (certain cellular carriers, public/hotel Wi-Fi) block non-standard ports outright, and iOS's App Transport Security won't allow cleartext HTTP to an arbitrary host without an exception baked into the app. A real cert avoids both — and if the VM already runs nginx for other sites, this only *adds* a site, it doesn't touch the existing ones.
+
+Point a domain (or subdomain) at the VM's IP first, then add an nginx site for it — `uvicorn` keeps running exactly as-is on plain HTTP, `127.0.0.1:8000`, with nginx as the public-facing TLS terminator in front of it:
+
+```sh
+sudo tee /etc/nginx/sites-available/txntrace << 'EOF'
+server {
+    server_name <your-domain>;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    listen 80;
+}
+EOF
+sudo ln -s /etc/nginx/sites-available/txntrace /etc/nginx/sites-enabled/txntrace
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Then let certbot's nginx plugin get the cert (HTTP-01, via the port 80 nginx already serves) and wire the SSL config + HTTP→HTTPS redirect into that same file automatically:
+
+```sh
+sudo apt install -y python3-certbot-nginx   # already present if certbot manages another site on this box
+sudo certbot --nginx -d <your-domain>
+```
+
+Certbot's own systemd timer handles renewal from here — no extra scripting needed, since nginx (not the `ubuntu`-owned uvicorn process) is what reads the cert files. Once `https://<your-domain>` responds, update `SERVER_URL` in the mobile app's `.env` and re-save it in Settings if you'd previously set one there (an explicit save always overrides the built-in default).
+
+If the domain is proxied through Cloudflare (orange cloud), this needs no special handling — standard port 443 is always in Cloudflare's proxied-port list, unlike arbitrary high ports.
+
 ## CI/CD: auto-deploy on push to `main`
 
 Yes — `.github/workflows/deploy.yml` SSHes into the VM and redeploys automatically whenever `server/` changes land on `main`. It needs three things set up once, which GitHub Actions can't do on its own:

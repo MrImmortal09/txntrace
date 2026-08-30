@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView } from 'react-native';
-import Swiper from 'react-native-deck-swiper';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView, Animated, PanResponder } from 'react-native';
 import Contacts from 'react-native-contacts';
 import { db } from '../db/schema';
+
+const SWIPE_THRESHOLD = 100;
 
 interface Transaction {
   id: string;
@@ -42,7 +43,7 @@ const ReviewScreen = () => {
   const [contactRecency, setContactRecency] = useState<Record<string, string>>({});
   const [selectedContacts, setSelectedContacts] = useState<SplitContact[]>([]);
 
-  const swiperRef = useRef<Swiper<Transaction>>(null);
+  const pan = useRef(new Animated.ValueXY()).current;
 
   useEffect(() => {
     loadData();
@@ -67,6 +68,7 @@ const ReviewScreen = () => {
     setSelectedCategoryId(null);
     setNote('');
     setSelectedContacts([]);
+    pan.setValue({ x: 0, y: 0 });
   };
 
   const handleReview = async (index: number) => {
@@ -90,6 +92,41 @@ const ReviewScreen = () => {
       console.error('Failed to update transaction', error);
     }
   };
+
+  // Replaces react-native-deck-swiper: that library sizes its card/gesture
+  // layer off Dimensions.get('window') at module load, ignoring the actual
+  // (smaller) space its parent gets once the category/note form below it
+  // takes its share — the oversized invisible layer swallowed taps meant for
+  // that form. A single plain-PanResponder card, same pattern as
+  // SwipeableRow, doesn't have that problem since it's sized by normal flow.
+  const advance = (direction: 1 | -1 = 1) => {
+    Animated.timing(pan, {
+      toValue: { x: direction * 500, y: 0 },
+      duration: 200,
+      useNativeDriver: false,
+    }).start(() => {
+      const index = currentIndex;
+      handleReview(index);
+      handleCardChange(index + 1);
+    });
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
+      onPanResponderMove: (_, gesture) => {
+        pan.setValue({ x: gesture.dx, y: 0 });
+      },
+      onPanResponderRelease: (_, gesture) => {
+        if (Math.abs(gesture.dx) > SWIPE_THRESHOLD) {
+          advance(gesture.dx > 0 ? 1 : -1);
+        } else {
+          Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+        }
+      },
+    })
+  ).current;
 
   const openSplitModal = async () => {
     try {
@@ -170,30 +207,32 @@ const ReviewScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.swiperContainer}>
-        <Swiper
-          ref={swiperRef}
-          cards={txns}
-          renderCard={(card: Transaction) => (
-            <View style={styles.card}>
-              <Text style={styles.cardBank}>{card.bank}</Text>
-              <Text style={[styles.cardAmount, card.type === 'credit' ? styles.credit : styles.debit]}>
-                {card.type === 'credit' ? '+' : '-'}{card.amount}
-              </Text>
-              <Text style={styles.cardMerchant}>{card.merchant_raw}</Text>
-              <Text style={styles.cardDate}>{new Date(card.date).toLocaleDateString()}</Text>
-            </View>
-          )}
-          onSwiped={(index) => {
-            handleReview(index);
-            handleCardChange(index + 1);
-          }}
-          onSwipedAll={() => setTxns([])}
-          cardIndex={currentIndex}
-          backgroundColor={'transparent'}
-          stackSize={3}
-          disableBottomSwipe
-          disableTopSwipe
-        />
+        {currentTxn && (
+          <Animated.View
+            style={[
+              styles.card,
+              {
+                transform: [
+                  ...pan.getTranslateTransform(),
+                  {
+                    rotate: pan.x.interpolate({
+                      inputRange: [-200, 0, 200],
+                      outputRange: ['-10deg', '0deg', '10deg'],
+                    }),
+                  },
+                ],
+              },
+            ]}
+            {...panResponder.panHandlers}
+          >
+            <Text style={styles.cardBank}>{currentTxn.bank}</Text>
+            <Text style={[styles.cardAmount, currentTxn.type === 'credit' ? styles.credit : styles.debit]}>
+              {currentTxn.type === 'credit' ? '+' : '-'}{currentTxn.amount}
+            </Text>
+            <Text style={styles.cardMerchant}>{currentTxn.merchant_raw}</Text>
+            <Text style={styles.cardDate}>{new Date(currentTxn.date).toLocaleDateString()}</Text>
+          </Animated.View>
+        )}
       </View>
 
       {currentTxn && (
@@ -226,9 +265,9 @@ const ReviewScreen = () => {
               <Text style={styles.splitButtonText}>Split this ({selectedContacts.length})</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.reviewButton} 
-              onPress={() => swiperRef.current?.swipeRight()}
+            <TouchableOpacity
+              style={styles.reviewButton}
+              onPress={() => advance(1)}
             >
               <Text style={styles.reviewButtonText}>Review & Next</Text>
             </TouchableOpacity>
@@ -300,8 +339,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f0f0' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18, color: '#888' },
-  swiperContainer: { flex: 1, position: 'relative' },
+  swiperContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   card: {
+    width: '88%',
     height: 300,
     backgroundColor: '#fff',
     borderRadius: 20,
