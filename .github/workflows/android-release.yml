@@ -1,0 +1,132 @@
+name: Create Android Release (APK & AAB)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type (patch, minor, major)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+      track:
+        description: 'Play Store Track'
+        required: true
+        default: 'alpha'
+        type: choice
+        options:
+        - internal
+        - alpha
+        - beta
+        - production
+
+jobs:
+  release:
+    name: Build & Release Android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Configure Git
+        run: |
+          set -e
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump Version
+        working-directory: ./app
+        id: version_bump
+        run: |
+          set -e
+          # Basic version bump using npm version
+          npm version ${{ github.event.inputs.bump_type }} --no-git-tag-version
+          
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          
+          # Commit the changes
+          git add package.json
+          git commit -m "chore(release): bump version to v$NEW_VERSION"
+          git tag "v$NEW_VERSION"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin --tags
+
+      - name: Setup Java Jdk
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Inject Environment Variables
+        working-directory: ./app
+        run: |
+          echo "SERVER_URL=${{ secrets.SERVER_URL }}" >> .env
+
+      - name: Decode Keystore
+        working-directory: ./app/android/app
+        run: |
+          # The keystore is stored as a base64 encoded string in secrets
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > txntrace-release.keystore
+
+      - name: Build Android APK and AAB
+        working-directory: ./app/android
+        run: |
+          set -e
+          chmod +x ./gradlew
+          ./gradlew assembleRelease bundleRelease \
+            -PMYAPP_UPLOAD_STORE_FILE=txntrace-release.keystore \
+            -PMYAPP_UPLOAD_STORE_PASSWORD='${{ secrets.KEYSTORE_PASSWORD }}' \
+            -PMYAPP_UPLOAD_KEY_ALIAS='${{ secrets.KEY_ALIAS }}' \
+            -PMYAPP_UPLOAD_KEY_PASSWORD='${{ secrets.KEY_PASSWORD }}'
+
+      - name: Extract Release Notes
+        id: changelog
+        run: |
+          set -e
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 --match="v*" HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          COMMITS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s (%h)")
+          echo -e "Changes in this release:\n\n$COMMITS" > release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.NEW_VERSION }}
+          name: Release v${{ env.NEW_VERSION }}
+          body_path: release_notes.md
+          files: |
+            app/android/app/build/outputs/apk/release/app-release.apk
+            app/android/app/build/outputs/bundle/release/app-release.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Google Play Store
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_CREDENTIALS }}
+          packageName: com.chanakya.txntrace
+          releaseFiles: app/android/app/build/outputs/bundle/release/app-release.aab
+          track: ${{ github.event.inputs.track }}
+          status: completed
