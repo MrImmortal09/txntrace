@@ -1,12 +1,13 @@
 import React, { useRef } from 'react';
 import { View, Text, StyleSheet, Animated, PanResponder } from 'react-native';
+import { useTheme } from '../theme/ThemeProvider';
 
 interface Props {
   onSwipeRight: () => void;
   children: React.ReactNode;
 }
 
-const SWIPE_THRESHOLD = 90;
+const SWIPE_THRESHOLD = 40;
 
 /**
  * Built on core PanResponder/Animated rather than react-native-gesture-handler
@@ -15,13 +16,14 @@ const SWIPE_THRESHOLD = 90;
  * native dependency to feel right.
  */
 const SwipeableRow = ({ onSwipeRight, children }: Props) => {
+  const { colors } = useTheme();
   const pan = useRef(new Animated.ValueXY()).current;
   const rowOpacity = useRef(new Animated.Value(1)).current;
 
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gesture) =>
-        Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
+        Math.abs(gesture.dx) > 4 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
       onPanResponderMove: (_, gesture) => {
         if (gesture.dx > 0) pan.setValue({ x: gesture.dx, y: 0 });
       },
@@ -49,7 +51,7 @@ const SwipeableRow = ({ onSwipeRight, children }: Props) => {
 
   return (
     <View style={styles.wrapper}>
-      <View style={styles.background}>
+      <View style={[styles.background, { backgroundColor: colors.accent }]}>
         <Text style={styles.backgroundText}>✓ Mine</Text>
       </View>
       <Animated.View
@@ -66,12 +68,12 @@ const styles = StyleSheet.create({
   wrapper: { marginBottom: 10 },
   background: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#34C759',
-    borderRadius: 10,
+    borderRadius: 14,
     justifyContent: 'center',
     paddingLeft: 20,
+    marginVertical: 2, // matches the visual card spacing better than touching edges
   },
-  backgroundText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+  backgroundText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
 });
 
 export default SwipeableRow;

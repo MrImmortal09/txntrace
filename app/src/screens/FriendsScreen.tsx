@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../db/schema';
 import { matchNameToContact } from '../services/settlements';
 import ContactPickerModal, { PickedContact } from '../components/ContactPickerModal';
@@ -21,6 +22,7 @@ interface FriendBalance {
 
 const FriendsScreen = () => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const [pending, setPending] = useState<PendingMatch[]>([]);
   const [friends, setFriends] = useState<FriendBalance[]>([]);
   const [matchingTxn, setMatchingTxn] = useState<PendingMatch | null>(null);
@@ -85,8 +87,8 @@ const FriendsScreen = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.titleRow}>
+    <View style={styles.container}>
+      <View style={[styles.titleRow, { paddingTop: Math.max(insets.top + 16, 16) }]}>
         <Text style={styles.title}>Friends</Text>
         <TouchableOpacity style={styles.addButton} onPress={() => setAddingExpense(true)}>
           <Text style={styles.addButtonText}>+</Text>
@@ -158,7 +160,7 @@ const FriendsScreen = () => {
           loadData();
         }}
       />
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -169,7 +171,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 16,
     paddingBottom: 8,
   },
   title: { fontSize: 24, fontWeight: 'bold', color: '#333' },

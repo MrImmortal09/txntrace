@@ -48,7 +48,7 @@ export const TabNavigator = () => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   
-  const bottomPadding = Platform.OS === 'ios' ? insets.bottom : 12;
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : 12;
 
   return (
     <Tab.Navigator

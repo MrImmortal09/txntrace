@@ -3,7 +3,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { StatusBar, StyleSheet, View, Text, AppState, TouchableOpacity, Platform } from 'react-native';
+import { StatusBar, StyleSheet, View, Text, AppState, TouchableOpacity, Platform, PermissionsAndroid } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { TabNavigator } from './src/screens/TabNavigator';
@@ -18,8 +18,23 @@ function MainApp() {
   const [smsError, setSmsError] = useState<string | null>(null);
 
   useEffect(() => {
+    const requestPermissions = async () => {
+      if (Platform.OS === 'android') {
+        try {
+          await PermissionsAndroid.requestMultiple([
+            PermissionsAndroid.PERMISSIONS.READ_SMS,
+            PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
+            PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
+          ]);
+        } catch (err) {
+          console.warn(err);
+        }
+      }
+    };
+
     const initDb = async () => {
       try {
+        await requestPermissions();
         await setupDatabase();
         setDbInitialized(true);
       } catch (error) {

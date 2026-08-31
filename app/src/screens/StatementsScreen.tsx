@@ -55,7 +55,7 @@ const StatementsScreen = () => {
         throw new Error('Unsupported file format');
       }
 
-      const parsedTransactions = parseStatement(selectedBank, rawText, isCsv || isXls);
+      const parsedTransactions = parseStatement(selectedBank, rawText, !!(isCsv || isXls));
       
       if (parsedTransactions.length === 0) {
         Alert.alert('No Transactions', 'Could not parse any transactions from this document. (Parser might be a skeleton)');
