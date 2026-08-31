@@ -71,6 +71,9 @@ sudo nano /etc/systemd/system/txntrace.service   # check User= and the paths mat
 sudo systemctl daemon-reload
 sudo systemctl enable --now txntrace
 sudo systemctl status txntrace   # should show "active (running)"
+
+# To restart the server after pulling updates or changing .env:
+sudo systemctl restart txntrace
 ```
 
 From here, `http://<vm-public-ip>:8000` should be reachable — enter that in the mobile app's Settings → Sync from Web.
