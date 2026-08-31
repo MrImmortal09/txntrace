@@ -2,23 +2,24 @@ import { SERVER_URL as SERVER_URL_DEFAULT } from '@env';
 import { db } from '../db/schema';
 import { getSetting, setSetting } from './appSettings';
 
-const SERVER_URL_KEY = 'web_sync_server_url';
 const LAST_SYNC_KEY = 'web_sync_last_created_at';
+const AUTH_TOKEN_KEY = 'web_sync_auth_token';
 
-/**
- * An explicit choice made via Settings always wins — a build-time default
- * shouldn't silently override something the user deliberately changed. It's
- * only consulted (not persisted) when nothing has been set yet, so bumping
- * SERVER_URL in .env and rebuilding still takes effect for anyone who never
- * touched the field.
- */
-export const getServerUrl = async (): Promise<string | null> => {
-  const stored = await getSetting(SERVER_URL_KEY);
-  if (stored) return stored;
-  return SERVER_URL_DEFAULT ? SERVER_URL_DEFAULT.replace(/\/+$/, '') : null;
+export const getServerUrl = async (): Promise<string> => {
+  return 'https://txn.axiosiiitl.dev';
 };
 
-export const setServerUrl = (url: string) => setSetting(SERVER_URL_KEY, url.replace(/\/+$/, ''));
+export const getAuthToken = async (): Promise<string | null> => {
+  return await getSetting(AUTH_TOKEN_KEY);
+};
+
+export const setAuthToken = (token: string) => setSetting(AUTH_TOKEN_KEY, token);
+
+const getAuthHeaders = async () => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not authenticated. Please login first.');
+  return { 'Authorization': `Bearer ${token}` };
+};
 
 interface RemoteTransaction {
   id: string;
@@ -56,8 +57,9 @@ export const syncFromServer = async (): Promise<{ imported: number }> => {
 
   const since = await getSetting(LAST_SYNC_KEY);
   const url = `${baseUrl}/api/transactions/export${since ? `?since=${encodeURIComponent(since)}` : ''}`;
+  const headers = await getAuthHeaders();
 
-  const res = await fetch(url);
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   const remote: RemoteTransaction[] = data.transactions || [];
@@ -137,7 +139,8 @@ export const syncCardsFromServer = async (): Promise<{ count: number }> => {
   const baseUrl = await getServerUrl();
   if (!baseUrl) throw new Error('No server URL configured.');
 
-  const res = await fetch(`${baseUrl}/api/cards/export`);
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${baseUrl}/api/cards/export`, { headers });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   const remote: RemoteCard[] = data.cards || [];
@@ -171,9 +174,10 @@ export const syncContactsToServer = async (contacts: LocalContact[]): Promise<{ 
   const baseUrl = await getServerUrl();
   if (!baseUrl) throw new Error('No server URL configured.');
 
+  const headers = await getAuthHeaders();
   const res = await fetch(`${baseUrl}/api/contacts/sync`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ contacts }),
   });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
@@ -204,8 +208,9 @@ export const syncSplitsFromServer = async (): Promise<{ imported: number }> => {
 
   const since = await getSetting(LAST_SPLITS_SYNC_KEY);
   const url = `${baseUrl}/api/splits/export${since ? `?since=${encodeURIComponent(since)}` : ''}`;
+  const headers = await getAuthHeaders();
 
-  const res = await fetch(url);
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   const remote: RemoteSplit[] = data.splits || [];
@@ -252,9 +257,10 @@ export const syncSplitsToServer = async (): Promise<{ count: number }> => {
   const splits = rows?._array || rows || [];
   if (splits.length === 0) return { count: 0 };
 
+  const headers = await getAuthHeaders();
   const result = await fetch(`${baseUrl}/api/splits/sync`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ splits }),
   });
   if (!result.ok) throw new Error(`Server responded with ${result.status}`);
@@ -275,9 +281,10 @@ export const syncSettlementsToServer = async (): Promise<{ count: number }> => {
   const settlements = rows?._array || rows || [];
   if (settlements.length === 0) return { count: 0 };
 
+  const headers = await getAuthHeaders();
   const result = await fetch(`${baseUrl}/api/settlements/sync`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ settlements }),
   });
   if (!result.ok) throw new Error(`Server responded with ${result.status}`);

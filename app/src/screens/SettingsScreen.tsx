@@ -4,28 +4,28 @@ import { useNavigation } from '@react-navigation/native';
 import Contacts from 'react-native-contacts';
 import { db } from '../db/schema';
 import {
-  getServerUrl,
-  setServerUrl,
   syncFromServer,
   syncCardsFromServer,
   syncContactsToServer,
   syncSplitsFromServer,
   syncSplitsToServer,
   syncSettlementsToServer,
+  getAuthToken,
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
 import { useTheme } from '../theme/ThemeProvider';
+import { OTPLoginModal } from '../components/OTPLoginModal';
 
 const SettingsScreen = () => {
   const navigation = useNavigation<any>();
   const { colors, themePreference, setThemePreference } = useTheme();
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [reparsing, setReparsing] = useState(false);
-  const [serverUrl, setServerUrlInput] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
 
   useEffect(() => {
-    getServerUrl().then(url => { if (url) setServerUrlInput(url); });
+    // No need to load serverUrl anymore
   }, []);
 
 
@@ -53,13 +53,14 @@ const SettingsScreen = () => {
   };
 
   const handleSync = async () => {
-    if (!serverUrl.trim()) {
-      log('Enter your server URL first (e.g. http://192.168.1.10:8000).');
+    const token = await getAuthToken();
+    if (!token) {
+      setShowLoginModal(true);
       return;
     }
+    
     setSyncing(true);
     try {
-      await setServerUrl(serverUrl.trim());
       const { imported } = await syncFromServer();
       const { count } = await syncCardsFromServer();
 
@@ -153,21 +154,21 @@ const SettingsScreen = () => {
 
 
       <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Sync from web</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Sync with Web</Text>
         <Text style={[styles.hint, { color: colors.textSecondary }]}>Pulls in statements and splits from the web app, and pushes your contacts and friend activity up so the web's Friends page matches this one</Text>
-        <TextInput
-          style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
-          placeholder="http://192.168.1.10:8000"
-          placeholderTextColor={colors.textSecondary}
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={serverUrl}
-          onChangeText={setServerUrlInput}
-        />
         <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={handleSync} disabled={syncing}>
-          <Text style={styles.buttonText}>{syncing ? 'Syncing…' : 'Sync from Web'}</Text>
+          <Text style={styles.buttonText}>{syncing ? 'Syncing…' : 'Sync now'}</Text>
         </TouchableOpacity>
       </View>
+
+      <OTPLoginModal 
+        visible={showLoginModal} 
+        onClose={() => setShowLoginModal(false)}
+        onSuccess={() => {
+          setShowLoginModal(false);
+          handleSync();
+        }}
+      />
 
       <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Diagnostics</Text>

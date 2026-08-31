@@ -13,6 +13,14 @@ DATABASE_URL = os.environ.get("DB")
 # Mirrors the mobile app's `transactions` table (app/src/db/schema.ts) column
 # for column, so a row from either side maps onto the other with no renaming —
 # that's what makes phone <-> server sync a straight copy instead of a translation.
+USERS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    phone TEXT UNIQUE,
+    created_at TEXT
+);
+"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY,
@@ -31,7 +39,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     balance REAL,
     sender TEXT,
     sms_body TEXT,
-    card_id TEXT
+    card_id TEXT,
+    user_id TEXT
 );
 """
 
@@ -49,7 +58,8 @@ CREATE TABLE IF NOT EXISTS cards (
     credit_limit REAL,
     is_credit_card INTEGER DEFAULT 1,
     custom_pattern TEXT,
-    created_at TEXT
+    created_at TEXT,
+    user_id TEXT
 );
 """
 
@@ -63,7 +73,8 @@ CONTACTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
     name TEXT,
-    created_at TEXT
+    created_at TEXT,
+    user_id TEXT
 );
 """
 
@@ -89,7 +100,8 @@ CREATE TABLE IF NOT EXISTS splits (
     created_at TEXT,
     txn_date TEXT,
     txn_merchant TEXT,
-    txn_amount REAL
+    txn_amount REAL,
+    user_id TEXT
 );
 """
 
@@ -106,7 +118,8 @@ CREATE TABLE IF NOT EXISTS settlements (
     transaction_id TEXT,
     matched_split_id TEXT,
     date TEXT,
-    created_at TEXT
+    created_at TEXT,
+    user_id TEXT
 );
 """
 
@@ -128,6 +141,7 @@ def get_db():
 
 def init_db() -> None:
     with get_db() as conn:
+        conn.execute(USERS_SCHEMA)
         conn.execute(SCHEMA)
         conn.execute(CARDS_SCHEMA)
         conn.execute(CONTACTS_SCHEMA)
@@ -156,3 +170,9 @@ def init_db() -> None:
                FROM transactions t
                WHERE t.id = splits.transaction_id AND splits.txn_amount IS NULL"""
         )
+        # Multi-user migrations
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id TEXT")
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS user_id TEXT")
+        conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS user_id TEXT")
+        conn.execute("ALTER TABLE splits ADD COLUMN IF NOT EXISTS user_id TEXT")
+        conn.execute("ALTER TABLE settlements ADD COLUMN IF NOT EXISTS user_id TEXT")
