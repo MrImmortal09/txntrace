@@ -55,7 +55,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone })
         });
-        if (!res.ok) throw new Error("Failed to send OTP");
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || "Failed to send OTP");
+        }
         
         document.getElementById('phone-section').style.display = 'none';
         document.getElementById('otp-section').style.display = 'block';

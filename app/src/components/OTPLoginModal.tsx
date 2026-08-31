@@ -31,7 +31,10 @@ export const OTPLoginModal = ({ visible, onClose, onSuccess }: Props) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
       });
-      if (!res.ok) throw new Error('Failed to request OTP');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || 'Failed to request OTP');
+      }
       setStep('otp');
     } catch (e: any) {
       setError(e.message);

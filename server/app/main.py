@@ -77,14 +77,17 @@ async def request_otp(payload: dict):
     chat_id = f"91{phone}@s.whatsapp.net"
     text = f"Your OTP is: *{otp}*\\nValid for 10 minutes. Do not share with anyone."
     
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{WA_SERVER_URL}/api/sendText",
-            headers={"Content-Type": "application/json", "key": WA_API_KEY},
-            json={"chatId": chat_id, "text": text}
-        )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=500, detail="WhatsApp server error")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{WA_SERVER_URL}/api/sendText",
+                headers={"Content-Type": "application/json", "key": WA_API_KEY},
+                json={"chatId": chat_id, "text": text}
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=500, detail=f"WhatsApp server returned {resp.status_code}: {resp.text}")
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to connect to WhatsApp server: {str(exc)}")
     return {"success": True}
 
 @app.post("/api/auth/verify-otp")
