@@ -116,26 +116,35 @@ jobs:
           EXISTING_KEYCHAINS=$(security list-keychains -d user | tr -d '"')
           security list-keychains -d user -s "$KEYCHAIN_PATH" $EXISTING_KEYCHAINS
 
-          # Extract UUID and install provisioning profile
-          PROFILE_UUID=$(security cms -D -i "$PP_PATH" | plutil -extract UUID raw -)
+          # Extract metadata from provisioning profile using Python
+          python3 -c "
+          import plistlib, subprocess, sys
+          p = subprocess.run(['security', 'cms', '-D', '-i', '$PP_PATH'], capture_output=True)
+          plist = plistlib.loads(p.stdout)
+          uuid = plist.get('UUID', '')
+          team_id = plist.get('TeamIdentifier', [''])[0]
+          app_id = plist.get('Entitlements', {}).get('application-identifier', '')
+          bundle_id = app_id[len(team_id)+1:] if team_id and app_id.startswith(team_id + '.') else app_id
+          groups = plist.get('Entitlements', {}).get('com.apple.security.application-groups', [])
+          app_group = groups[0] if groups else 'group.b96296c92bb96aa2.1'
+
+          with open(sys.argv[1], 'a') as f:
+              f.write(f'PROFILE_UUID={uuid}\n')
+              f.write(f'TEAM_ID={team_id}\n')
+              f.write(f'BUNDLE_ID={bundle_id}\n')
+              f.write(f'APP_GROUP={app_group}\n')
+
+          print(f'Extracted Profile UUID: {uuid}')
+          print(f'Extracted Team ID: {team_id}')
+          print(f'Extracted Bundle ID: {bundle_id}')
+          print(f'Extracted App Group: {app_group}')
+          " "$GITHUB_ENV"
+
+          # Install provisioning profile
+          PROFILE_UUID=$(python3 -c "import plistlib, subprocess; p = subprocess.run(['security', 'cms', '-D', '-i', '$PP_PATH'], capture_output=True); print(plistlib.loads(p.stdout).get('UUID', ''))")
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/${PROFILE_UUID}.mobileprovision
 
-          # Extract identifiers from profile
-          APP_ID=$(security cms -D -i "$PP_PATH" | plutil -extract "Entitlements.application-identifier" raw -)
-          TEAM_ID=$(security cms -D -i "$PP_PATH" | plutil -extract "TeamIdentifier.0" raw -)
-          BUNDLE_ID="${APP_ID#$TEAM_ID.}"
-          APP_GROUP=$(security cms -D -i "$PP_PATH" | plutil -extract "Entitlements.com.apple.security.application-groups.0" raw - 2>/dev/null || echo "")
-
-          echo "Extracted Profile UUID: $PROFILE_UUID"
-          echo "Extracted Team ID: $TEAM_ID"
-          echo "Extracted Bundle ID: $BUNDLE_ID"
-          echo "Extracted App Group: $APP_GROUP"
-
-          echo "PROFILE_UUID=$PROFILE_UUID" >> $GITHUB_ENV
-          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
-          echo "BUNDLE_ID=$BUNDLE_ID" >> $GITHUB_ENV
-          echo "APP_GROUP=$APP_GROUP" >> $GITHUB_ENV
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
 
       - name: Inject Environment Variables
