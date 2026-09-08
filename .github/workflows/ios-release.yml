@@ -1,6 +1,9 @@
 name: Build & Release Signed iOS App (IPA)
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       bump_type:
@@ -48,13 +51,13 @@ jobs:
         run: npm ci
 
       - name: Configure Git
-        if: ${{ github.event.inputs.bump_type != 'none' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bump_type != '' && github.event.inputs.bump_type != 'none' }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Bump Version
-        if: ${{ github.event.inputs.bump_type != 'none' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bump_type != '' && github.event.inputs.bump_type != 'none' }}
         working-directory: ./app
         id: version_bump
         run: |
