@@ -21,8 +21,10 @@ interface SmsLogEntry {
 const SOURCE_LABEL: Record<string, string> = {
   shortcut: 'Shortcut',
   filter: 'Filter',
+  manual: 'Manual',
   unknown: 'Unknown',
 };
+
 
 const LogsScreen = () => {
   const [logs, setLogs] = useState<SmsLogEntry[]>([]);

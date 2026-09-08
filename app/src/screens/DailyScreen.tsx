@@ -1,11 +1,13 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import Svg, { Line } from 'react-native-svg';
 import { db } from '../db/schema';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
 import SwipeableRow from '../components/SwipeableRow';
 import SplitModal from '../components/SplitModal';
 import BankIcon from '../components/BankIcon';
+import PasteSMSModal from '../components/PasteSMSModal';
 import { useTheme } from '../theme/ThemeProvider';
 import { checkNewMessages } from '../services/smsIngest';
 
@@ -16,6 +18,7 @@ const DailyScreen = () => {
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [splitting, setSplitting] = useState<Transaction | null>(null);
+  const [pasteModalVisible, setPasteModalVisible] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -57,7 +60,20 @@ const DailyScreen = () => {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <Text style={[styles.title, { color: colors.text }]}>Needs Review</Text>
+      <View style={styles.headerRow}>
+        <Text style={[styles.title, { color: colors.text }]}>Needs Review</Text>
+        <TouchableOpacity
+          style={[styles.addButton, { backgroundColor: colors.primary }]}
+          onPress={() => setPasteModalVisible(true)}
+          activeOpacity={0.8}
+          accessibilityLabel="Add transaction from SMS"
+        >
+          <Svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <Line x1="12" y1="5" x2="12" y2="19" />
+            <Line x1="5" y1="12" x2="19" y2="12" />
+          </Svg>
+        </TouchableOpacity>
+      </View>
 
       <View style={styles.summaryRow}>
         <View style={[styles.summaryCard, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
@@ -122,13 +138,36 @@ const DailyScreen = () => {
           }}
         />
       )}
+      <PasteSMSModal
+        visible={pasteModalVisible}
+        onClose={() => setPasteModalVisible(false)}
+        onSuccess={load}
+      />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  title: { fontSize: 24, fontWeight: 'bold', paddingHorizontal: 16, paddingTop: 16 },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  title: { fontSize: 24, fontWeight: 'bold' },
+  addButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+  },
   summaryRow: { flexDirection: 'row', paddingHorizontal: 16, marginTop: 12, marginBottom: 8, gap: 12 },
   summaryCard: { flex: 1, borderRadius: 12, padding: 16, alignItems: 'center', elevation: 2, shadowOpacity: 1, shadowOffset: { width: 0, height: 2 }, shadowRadius: 8 },
   summaryLabel: { fontSize: 13, marginBottom: 6, fontWeight: '500' },

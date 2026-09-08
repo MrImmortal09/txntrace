@@ -74,6 +74,77 @@ export const isCreditTransaction = (message: string): boolean => {
  * Matches "UPI:660719831342", "RRN:660730856024", and "Ref-UPI/660730856024/...".
  */
 export const extractReference = (message: string): string | null => {
-  const match = message.match(/(?:UPI|RRN)[:\-/]?\s*(\d{9,})/i);
+  const match = message.match(/(?:UPI(?:\s*(?:Ref|txn))?|RRN|Ref(?:\s*no\.?)?)[:\-/]?\s*(\d{9,})/i);
   return match ? match[1] : null;
 };
+
+
+/**
+ * Extracts transaction date from SMS text if present, e.g. "on 29-Aug-26", "on 08/09/2026", "at 08-Sep-26".
+ * Returns an ISO timestamp string or null if unparsed.
+ */
+export const extractDateFromSms = (message: string): string | null => {
+  const dateMatch = message.match(/\b(?:on|at)\s+(\d{1,2})[-/]([A-Za-z]{3}|\d{1,2})[-/](\d{2,4})\b/i);
+  if (dateMatch) {
+    const day = parseInt(dateMatch[1], 10);
+    const monthStr = dateMatch[2];
+    let year = parseInt(dateMatch[3], 10);
+    if (year < 100) year += 2000;
+
+    let month = -1;
+    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const monthIdx = months.indexOf(monthStr.toLowerCase());
+    if (monthIdx !== -1) {
+      month = monthIdx;
+    } else {
+      const numMonth = parseInt(monthStr, 10);
+      if (numMonth >= 1 && numMonth <= 12) month = numMonth - 1;
+    }
+
+    if (month !== -1 && day >= 1 && day <= 31) {
+      const timeMatch = message.match(/\bat\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\b/i);
+      let hours = 12, minutes = 0, seconds = 0;
+      if (timeMatch) {
+        hours = parseInt(timeMatch[1], 10);
+        minutes = parseInt(timeMatch[2], 10);
+        if (timeMatch[3]) seconds = parseInt(timeMatch[3], 10);
+      }
+      const d = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+      if (!isNaN(d.getTime())) {
+        return d.toISOString();
+      }
+    }
+  }
+  return null;
+};
+
+/**
+ * Separates any sender prefix (e.g. "VM-HDFCBK:", "Sender: AX-ICICIB\n", "[SBI]") from the message body.
+ */
+export const extractSenderAndBody = (rawText: string, providedSender?: string): { sender: string; body: string } => {
+  let sender = (providedSender || '').trim();
+  let body = (rawText || '').trim();
+
+  if (!sender) {
+    const colonPrefixMatch = body.match(/^([A-Za-z0-9_-]{2,15}):\s*([\s\S]+)$/);
+    if (colonPrefixMatch) {
+      sender = colonPrefixMatch[1];
+      body = colonPrefixMatch[2].trim();
+    } else {
+      const senderHeaderMatch = body.match(/^Sender:\s*([^\n]+)\n+([\s\S]+)$/i);
+      if (senderHeaderMatch) {
+        sender = senderHeaderMatch[1].trim();
+        body = senderHeaderMatch[2].trim();
+      } else {
+        const bracketMatch = body.match(/^\[([A-Za-z0-9\s_-]{2,20})\]\s*([\s\S]+)$/);
+        if (bracketMatch) {
+          sender = bracketMatch[1].trim();
+          body = bracketMatch[2].trim();
+        }
+      }
+    }
+  }
+
+  return { sender, body };
+};
+

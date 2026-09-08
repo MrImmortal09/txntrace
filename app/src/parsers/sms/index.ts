@@ -1,5 +1,5 @@
 import { db } from '../../db/schema';
-import { extractReference } from './utils';
+import { extractReference, extractDateFromSms, extractSenderAndBody } from './utils';
 import { findAliasForName, applySettlement, looksLikePersonName } from '../../services/settlements';
 import { matchCard, Card } from '../../services/cardMatching';
 import * as hdfc from './hdfc';
@@ -15,8 +15,8 @@ export interface RawSMS {
   sender: string;
   body: string;
   receivedAt: string;
-  /** Which ingestion path delivered this: the Shortcuts automation or the message filter extension. */
-  source?: 'shortcut' | 'filter';
+  /** Which ingestion path delivered this: the Shortcuts automation, the message filter extension, or manual paste. */
+  source?: 'shortcut' | 'filter' | 'manual';
 }
 
 /**
@@ -174,3 +174,223 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
     }
   }
 };
+
+export interface IngestManualSMSParams {
+  body: string;
+  sender?: string;
+  bank?: string;
+}
+
+export interface IngestManualSMSResult {
+  success: boolean;
+  duplicate?: boolean;
+  transaction?: {
+    id: string;
+    bank: string;
+    amount: number;
+    type: 'debit' | 'credit';
+    merchant: string | null;
+    date: string;
+  };
+  error?: string;
+}
+
+export const previewParsedSMS = (rawBody: string, rawSender?: string, bankOverride?: string) => {
+  const trimmed = (rawBody || '').trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const { sender: detectedSender, body } = extractSenderAndBody(trimmed, rawSender);
+  const effectiveSender = bankOverride || detectedSender;
+  const normalizedBody = body.replace(/\s+/g, ' ').trim();
+  const now = new Date().toISOString();
+  const date = extractDateFromSms(body) || now;
+
+  let parsed: any = null;
+  if (bankOverride) {
+    parsed = routeSms(bankOverride, body, date) ?? routeSms(bankOverride, normalizedBody, date);
+  }
+
+  if (!parsed) {
+    parsed =
+      routeSms(effectiveSender, body, date) ??
+      routeSms(body, body, date) ??
+      routeSms(effectiveSender, normalizedBody, date) ??
+      routeSms(normalizedBody, normalizedBody, date) ??
+      parseAnySms(body, date) ??
+      parseAnySms(normalizedBody, date);
+  }
+
+  const reference = extractReference(body) || extractReference(normalizedBody);
+
+  return {
+    sender: effectiveSender,
+    body,
+    date,
+    reference,
+    parsed,
+  };
+};
+
+export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<IngestManualSMSResult> => {
+  if (!params.body || !params.body.trim()) {
+    return { success: false, error: 'Please enter or paste an SMS message.' };
+  }
+
+  const { sender: detectedSender, body } = extractSenderAndBody(params.body, params.sender);
+  const effectiveSender = params.bank || detectedSender;
+  const normalizedBody = body.replace(/\s+/g, ' ').trim();
+  const now = new Date().toISOString();
+  const date = extractDateFromSms(body) || now;
+
+  let parsed: any = null;
+  if (params.bank) {
+    parsed = routeSms(params.bank, body, date) ?? routeSms(params.bank, normalizedBody, date);
+  }
+
+  if (!parsed) {
+    parsed =
+      routeSms(effectiveSender, body, date) ??
+      routeSms(body, body, date) ??
+      routeSms(effectiveSender, normalizedBody, date) ??
+      routeSms(normalizedBody, normalizedBody, date) ??
+      parseAnySms(body, date) ??
+      parseAnySms(normalizedBody, date);
+  }
+
+  const reference = extractReference(body) || extractReference(normalizedBody);
+  const logKey = contentKey(effectiveSender, body, date);
+  const txnKey = reference ? `sms_ref_${reference}` : logKey;
+
+  if (!parsed) {
+    // Log as unparsed so there's an audit trail in sms_log
+    try {
+      await db.execute(
+        `INSERT OR IGNORE INTO sms_log
+          (id, sender, body, received_at, source, status, bank, amount, type, merchant, reference, logged_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          logKey,
+          effectiveSender,
+          body,
+          date,
+          'manual',
+          'unparsed',
+          null,
+          null,
+          null,
+          null,
+          reference,
+          now,
+        ]
+      );
+    } catch (e) {
+      console.error('Failed to log unparsed manual SMS:', e);
+    }
+
+    return {
+      success: false,
+      error: 'Could not extract transaction details. Make sure the message includes an amount (e.g. Rs 500) and debit/credit status.',
+    };
+  }
+
+  try {
+    const cardsRes = await db.execute('SELECT * FROM cards');
+    const cardRows: any = cardsRes.rows;
+    const cards: Card[] = cardRows?._array || cardRows || [];
+    const card = matchCard(cards, effectiveSender, body);
+
+    // Check if already exists in transactions
+    const existingRes = await db.execute(
+      'SELECT id, bank, amount, type, merchant_raw, date FROM transactions WHERE id = ?',
+      [txnKey]
+    );
+    const existingRows: any = existingRes.rows;
+    const existingArr = existingRows?._array || existingRows || [];
+    if (existingArr.length > 0) {
+      const existingTxn = existingArr[0];
+      return {
+        success: true,
+        duplicate: true,
+        transaction: {
+          id: existingTxn.id,
+          bank: existingTxn.bank,
+          amount: existingTxn.amount,
+          type: existingTxn.type,
+          merchant: existingTxn.merchant_raw,
+          date: existingTxn.date,
+        },
+      };
+    }
+
+    const insertResult = await db.execute(
+      `INSERT OR IGNORE INTO transactions
+        (id, bank, amount, type, merchant_raw, date, source, sender, sms_body, reference, card_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'sms', ?, ?, ?, ?, ?, ?)`,
+      [
+        txnKey,
+        parsed.bank,
+        parsed.amount,
+        parsed.type,
+        parsed.merchant,
+        parsed.date,
+        effectiveSender,
+        body,
+        reference,
+        card?.id ?? null,
+        now,
+        now,
+      ]
+    );
+
+    if (insertResult.rowsAffected > 0 && parsed.type === 'credit' && looksLikePersonName(parsed.merchant)) {
+      const alias = await findAliasForName(parsed.merchant!);
+      if (alias) {
+        await applySettlement(alias.contact_id, alias.contact_name, parsed.amount, txnKey);
+      } else {
+        await db.execute('UPDATE transactions SET needs_contact_match = 1 WHERE id = ?', [txnKey]);
+      }
+    }
+
+    await db.execute(
+      `INSERT OR IGNORE INTO sms_log
+        (id, sender, body, received_at, source, status, bank, amount, type, merchant, reference, logged_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        logKey,
+        effectiveSender,
+        body,
+        date,
+        'manual',
+        'parsed',
+        parsed.bank,
+        parsed.amount,
+        parsed.type,
+        parsed.merchant,
+        reference,
+        now,
+      ]
+    );
+
+    return {
+      success: true,
+      duplicate: false,
+      transaction: {
+        id: txnKey,
+        bank: parsed.bank,
+        amount: parsed.amount as number,
+        type: parsed.type as 'debit' | 'credit',
+        merchant: parsed.merchant,
+        date: parsed.date,
+      },
+    };
+  } catch (error: any) {
+    console.error('Failed to ingest manual SMS:', error);
+    return {
+      success: false,
+      error: error?.message || 'Failed to save transaction to database.',
+    };
+  }
+};
+

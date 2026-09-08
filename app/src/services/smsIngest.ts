@@ -1,4 +1,6 @@
-import { processSMSBatch } from '../parsers/sms';
+import { processSMSBatch, ingestManualSMS, previewParsedSMS } from '../parsers/sms';
+
+export { ingestManualSMS, previewParsedSMS };
 
 /**
  * Android background SMS ingestion to be implemented using broadcast receivers
