@@ -8,8 +8,8 @@ Welcome! This document defines operational standards, branch policies, and devel
 
 - **Directly commit to `main` (Preferred)** or create a Pull Request.
 - Pushing directly to `main` triggers the automated CI/CD workflows:
-  - **iOS Build & Signed Release**: Automatically builds, signs with ad-hoc certificate/provisioning profile, creates IPA, and publishes an OTA installable release on GitHub Releases.
-  - **Server Deployment**: Automatically deploys the backend server on pushes touching `server/**`.
+  - **iOS Build & Signed Release**: Automatically builds, signs with ad-hoc certificate/provisioning profile, creates IPA, and publishes an OTA installable release on GitHub Releases. **Runs on commits to `main` only (not on other branches).**
+  - **Server Deployment**: Automatically deploys the backend server on pushes touching `server/**` on `main`.
 - Write concise, conventional commit messages:
   - `feat(...)`: New features or capabilities
   - `fix(...)`: Bug fixes
