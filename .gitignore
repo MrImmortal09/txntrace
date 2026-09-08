@@ -4,3 +4,35 @@
 /*.xls
 /*.xlsx
 /*.pdf
+
+# Secrets, certificates, and signing keys - NEVER COMMIT
+*.p12
+*.pfx
+*.mobileprovision
+*.cer
+*.crt
+*.der
+*.pem
+*.key
+*.keystore
+*.jks
+*.secret
+secrets/
+
+# Environment files
+.env
+.env.*
+*.env
+
+# Credentials & Service Accounts
+*credentials*.json
+*service-account*.json
+google-services.json
+GoogleService-Info.plist
+
+# Build outputs
+*.ipa
+*.aab
+*.apk
+*.xcarchive
+Payload/
