@@ -1,0 +1,332 @@
+name: Build & Release Signed iOS App (IPA)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type (none, patch, minor, major)'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
+
+jobs:
+  build-ios:
+    name: Build, Sign & Release iOS
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install npm Dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Configure Git
+        if: ${{ github.event.inputs.bump_type != 'none' }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump Version
+        if: ${{ github.event.inputs.bump_type != 'none' }}
+        working-directory: ./app
+        id: version_bump
+        run: |
+          set -e
+          npm version ${{ github.event.inputs.bump_type }} --no-git-tag-version
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          git add package.json
+          git commit -m "chore(release): bump iOS version to v$NEW_VERSION"
+          git tag "v$NEW_VERSION"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin --tags
+
+      - name: Determine Current Version
+        run: |
+          VERSION=$(node -p "require('./app/package.json').version")
+          if [ -z "$NEW_VERSION" ]; then
+            echo "NEW_VERSION=$VERSION" >> $GITHUB_ENV
+          fi
+          echo "Building version: $VERSION"
+
+      - name: Setup Ruby & CocoaPods
+        working-directory: ./app
+        run: |
+          bundle install
+          cd ios
+          bundle exec pod install --repo-update || pod install --repo-update
+
+      - name: Install Apple Certificate and Provisioning Profile
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISION_BASE64: ${{ secrets.IOS_PROVISION_BASE64 }}
+        run: |
+          set -e
+
+          # Ensure temp paths
+          CERT_PATH="$RUNNER_TEMP/build_cert.p12"
+          PP_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 20)
+
+          # Decode certificate and provisioning profile
+          echo -n "$IOS_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_PATH"
+          echo -n "$IOS_PROVISION_BASE64" | base64 --decode -o "$PP_PATH"
+
+          # Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Download and import Apple Worldwide Developer Relations G3 Intermediate CA
+          curl -sSL https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o "$RUNNER_TEMP/AppleWWDRCAG3.cer"
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign
+
+          # Import .p12 certificate into keychain
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Append keychain to search list
+          EXISTING_KEYCHAINS=$(security list-keychains -d user | tr -d '"')
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $EXISTING_KEYCHAINS
+
+          # Extract UUID and install provisioning profile
+          PROFILE_UUID=$(security cms -D -i "$PP_PATH" | plutil -extract UUID raw -)
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/${PROFILE_UUID}.mobileprovision
+
+          # Extract identifiers from profile
+          APP_ID=$(security cms -D -i "$PP_PATH" | plutil -extract "Entitlements.application-identifier" raw -)
+          TEAM_ID=$(security cms -D -i "$PP_PATH" | plutil -extract "TeamIdentifier.0" raw -)
+          BUNDLE_ID="${APP_ID#$TEAM_ID.}"
+          APP_GROUP=$(security cms -D -i "$PP_PATH" | plutil -extract "Entitlements.com.apple.security.application-groups.0" raw - 2>/dev/null || echo "")
+
+          echo "Extracted Profile UUID: $PROFILE_UUID"
+          echo "Extracted Team ID: $TEAM_ID"
+          echo "Extracted Bundle ID: $BUNDLE_ID"
+          echo "Extracted App Group: $APP_GROUP"
+
+          echo "PROFILE_UUID=$PROFILE_UUID" >> $GITHUB_ENV
+          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
+          echo "BUNDLE_ID=$BUNDLE_ID" >> $GITHUB_ENV
+          echo "APP_GROUP=$APP_GROUP" >> $GITHUB_ENV
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+
+      - name: Inject Environment Variables
+        working-directory: ./app
+        run: |
+          touch .env
+          echo "SERVER_URL=${{ secrets.SERVER_URL }}" >> .env
+
+      - name: Sync App Group & Entitlements
+        run: |
+          if [ -n "$APP_GROUP" ]; then
+            echo "Configuring App Group to $APP_GROUP across iOS sources..."
+            # Replace default or previous app group if different
+            sed -i '' -E "s/group\.[a-zA-Z0-9._]+/$APP_GROUP/g" app/ios/TxnTrace/TxnTrace.entitlements 2>/dev/null || true
+            sed -i '' -E "s/group\.[a-zA-Z0-9._]+/$APP_GROUP/g" app/ios/TxnTrace/IngestSMSIntent.swift 2>/dev/null || true
+            sed -i '' -E "s/group\.[a-zA-Z0-9._]+/$APP_GROUP/g" app/modules/SharedSMSStore/ios/SharedSMSStore.swift 2>/dev/null || true
+          fi
+
+      - name: Build and Archive iOS App
+        working-directory: ./app/ios
+        run: |
+          set -e
+          mkdir -p build
+
+          xcodebuild -workspace TxnTrace.xcworkspace \
+            -scheme TxnTrace \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/TxnTrace.xcarchive \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_IDENTITY="iPhone Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            archive
+
+      - name: Export Archive to Signed IPA
+        working-directory: ./app/ios
+        run: |
+          set -e
+          mkdir -p build/export
+
+          cat <<EOF > ExportOptions.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>ad-hoc</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>teamID</key>
+              <string>$TEAM_ID</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>$BUNDLE_ID</key>
+                  <string>$PROFILE_UUID</string>
+              </dict>
+              <key>signingCertificate</key>
+              <string>iPhone Distribution</string>
+              <key>compileBitcode</key>
+              <false/>
+              <key>thinning</key>
+              <string>&lt;none&gt;</string>
+          </dict>
+          </plist>
+          EOF
+
+          if xcodebuild -exportArchive \
+            -archivePath build/TxnTrace.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist; then
+              echo "xcodebuild exportArchive succeeded!"
+              # Rename generated ipa if needed
+              if [ ! -f "build/export/TxnTrace.ipa" ]; then
+                cp build/export/*.ipa build/export/TxnTrace.ipa 2>/dev/null || true
+              fi
+          else
+              echo "xcodebuild -exportArchive failed or encountered packaging conflict, packaging signed app bundle directly..."
+              mkdir -p build/export/Payload
+              cp -R build/TxnTrace.xcarchive/Products/Applications/TxnTrace.app build/export/Payload/
+              cd build/export
+              zip -qr TxnTrace.ipa Payload
+              cd ../..
+          fi
+
+          test -f build/export/TxnTrace.ipa || (echo "Error: TxnTrace.ipa was not created!" && exit 1)
+          echo "IPA successfully created at $(pwd)/build/export/TxnTrace.ipa"
+
+      - name: Verify IPA Code Signature
+        working-directory: ./app/ios
+        run: |
+          unzip -q build/export/TxnTrace.ipa -d /tmp/ipa_verify
+          codesign -dvvv --entitlements :- /tmp/ipa_verify/Payload/TxnTrace.app
+          rm -rf /tmp/ipa_verify
+
+      - name: Generate Release Manifest & Release Notes
+        run: |
+          set -e
+          TAG="v${{ env.NEW_VERSION }}"
+          IPA_URL="https://github.com/MrImmortal09/txntrace/releases/download/${TAG}/TxnTrace.ipa"
+          RAW_MANIFEST_URL="https://raw.githubusercontent.com/MrImmortal09/txntrace/${TAG}/manifest.plist"
+          OTA_LINK="itms-services://?action=download-manifest&url=https%3A%2F%2Fraw.githubusercontent.com%2FMrImmortal09%2Ftxntrace%2Fmain%2Fmanifest.plist"
+
+          # Generate release manifest.plist
+          cat <<EOF > manifest.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>items</key>
+              <array>
+                  <dict>
+                      <key>assets</key>
+                      <array>
+                          <dict>
+                              <key>kind</key>
+                              <string>software-package</string>
+                              <key>url</key>
+                              <string>$IPA_URL</string>
+                          </dict>
+                      </array>
+                      <key>metadata</key>
+                      <dict>
+                          <key>bundle-identifier</key>
+                          <string>$BUNDLE_ID</string>
+                          <key>bundle-version</key>
+                          <string>${{ env.NEW_VERSION }}</string>
+                          <key>kind</key>
+                          <string>software</string>
+                          <key>title</key>
+                          <string>TxnTrace</string>
+                      </dict>
+                  </dict>
+              </array>
+          </dict>
+          </plist>
+          EOF
+
+          # Generate release notes
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 --match="v*" HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          COMMITS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s (%h)" 2>/dev/null || echo "- Automated iOS signed build")
+
+          cat <<EOF > release_notes.md
+          ## TxnTrace iOS Release v${{ env.NEW_VERSION }} (Signed)
+
+          ### 📲 1-Click Install via Safari
+          Open this link on your registered iPhone in **Safari**:
+          [**👉 Tap Here to Install TxnTrace on iOS**]($OTA_LINK)
+
+          *Alternatively, open [install.html](https://raw.githubusercontent.com/MrImmortal09/txntrace/main/install.html) in Safari.*
+
+          ---
+
+          ### 📦 Manual Download & Sideloading
+          - Download the signed **[TxnTrace.ipa]($IPA_URL)** directly.
+          - Sideload via [Signulous Dashboard](https://www.signulous.com/dashboard) (Upload App), AltStore, Scarlet, or TrollStore.
+
+          ---
+
+          ### ⚠️ iPhone Setup Requirement (iOS 16, 17, 18)
+          To launch installed ad-hoc signed apps on your device:
+          1. Go to **Settings > Privacy & Security**.
+          2. Scroll down to **Developer Mode** and turn it **ON**.
+          3. Restart your iPhone when prompted, then unlock and tap **Turn On**.
+
+          ---
+
+          ### 📝 Changes in this release:
+          $COMMITS
+          EOF
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: TxnTrace-iOS-v${{ env.NEW_VERSION }}
+          path: |
+            app/ios/build/export/TxnTrace.ipa
+            manifest.plist
+            install.html
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.NEW_VERSION }}
+          name: Release v${{ env.NEW_VERSION }} (iOS Signed)
+          body_path: release_notes.md
+          files: |
+            app/ios/build/export/TxnTrace.ipa
+            manifest.plist
+            install.html
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean up Keychain
+        if: always()
+        run: |
+          if [ -n "$KEYCHAIN_PATH" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi

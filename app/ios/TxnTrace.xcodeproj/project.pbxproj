@@ -171,12 +171,10 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
-				C704787430376BAD00BDA2DB /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				C704786E30376BAD00BDA2DB /* PBXTargetDependency */,
 			);
 			name = TxnTrace;
 			productName = TxnTrace;
@@ -209,14 +207,14 @@
 		83CBB9F71A601CBA00E9B192 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastSwiftUpdateCheck = 2660;
+				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1210;
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
 						LastSwiftMigration = 1120;
 					};
 					C704786730376BAD00BDA2DB = {
-						CreatedOnToolsVersion = 26.6;
+						CreatedOnToolsVersion = 16.0;
 					};
 				};
 			};
@@ -379,10 +377,10 @@
 				CODE_SIGN_ENTITLEMENTS = TxnTrace/TxnTrace.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4G96L8W59F;
+				DEVELOPMENT_TEAM = TJ27FT3Y2M;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = TxnTrace/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -393,7 +391,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.mrimmortal09.txntrace;
+				PRODUCT_BUNDLE_IDENTIFIER = app.opal897.eggplant5660;
 				PRODUCT_NAME = TxnTrace;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -412,9 +410,9 @@
 				CODE_SIGN_ENTITLEMENTS = TxnTrace/TxnTrace.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4G96L8W59F;
+				DEVELOPMENT_TEAM = TJ27FT3Y2M;
 				INFOPLIST_FILE = TxnTrace/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -425,7 +423,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.mrimmortal09.txntrace;
+				PRODUCT_BUNDLE_IDENTIFIER = app.opal897.eggplant5660;
 				PRODUCT_NAME = TxnTrace;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -611,7 +609,7 @@
 				INFOPLIST_FILE = TxnTraceSMSFilter/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TxnTraceSMSFilter;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -650,14 +648,14 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 4G96L8W59F;
+				DEVELOPMENT_TEAM = TJ27FT3Y2M;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TxnTraceSMSFilter/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TxnTraceSMSFilter;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

@@ -21,7 +21,7 @@ extension MessageFilterExtension: ILMessageFilterQueryHandling, ILMessageFilterC
         response.action = .none
         
         // Always stamp when we run — helps diagnose if iOS is invoking us at all
-        if let defaults = UserDefaults(suiteName: "group.org.mrimmortal09.txntrace") {
+        if let defaults = UserDefaults(suiteName: "group.b96296c92bb96aa2.1") {
             defaults.set(ISO8601DateFormatter().string(from: Date()), forKey: "extension_last_run")
             defaults.synchronize()
         }
@@ -57,7 +57,7 @@ extension MessageFilterExtension: ILMessageFilterQueryHandling, ILMessageFilterC
     
     private func saveMessage(sender: String, body: String) {
         let savedMessagesKey = "saved_bank_messages"
-        guard let defaults = UserDefaults(suiteName: "group.org.mrimmortal09.txntrace") else { return }
+        guard let defaults = UserDefaults(suiteName: "group.b96296c92bb96aa2.1") else { return }
         
         let newMessage: [String: Any] = [
             "id": UUID().uuidString,

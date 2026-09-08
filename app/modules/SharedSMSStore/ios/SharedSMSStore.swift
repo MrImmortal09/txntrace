@@ -3,7 +3,7 @@ import Foundation
 @objc(SharedSMSStore)
 class SharedSMSStore: NSObject {
 
-    private let suiteName = "group.org.mrimmortal09.txntrace"
+    private let suiteName = "group.b96296c92bb96aa2.1"
     private let savedMessagesKey = "saved_bank_messages"
     private let inboxFileName = "sms-inbox.jsonl"
     private let shortcutLastRunKey = "shortcut_last_run"

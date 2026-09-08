@@ -7,7 +7,7 @@ import Foundation
 /// send debit + balance back to back), and a read-modify-write on an array would
 /// drop one of them.
 enum SMSInbox {
-    static let appGroup = "group.org.mrimmortal09.txntrace"
+    static let appGroup = "group.b96296c92bb96aa2.1"
     static let fileName = "sms-inbox.jsonl"
     static let lastRunKey = "shortcut_last_run"
 
