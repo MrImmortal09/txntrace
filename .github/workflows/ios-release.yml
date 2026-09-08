@@ -290,13 +290,29 @@ jobs:
           COMMITS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s (%h)" 2>/dev/null || echo "- Automated iOS signed build")
 
           cat <<EOF > release_notes.md
-          ## TxnTrace iOS Release v${{ env.NEW_VERSION }} (Signed)
+          ## 📲 TxnTrace iOS Release v${{ env.NEW_VERSION }} (Signed)
 
-          ### 📲 1-Click Install via Safari
-          Open this link on your registered iPhone in **Safari**:
-          [**👉 Tap Here to Install TxnTrace on iOS**]($OTA_LINK)
+          ### Option 1: Open Web Installer in Safari (Recommended)
+          👉 **[Tap Here to Open Installer Webpage](https://htmlpreview.github.io/?https://github.com/MrImmortal09/txntrace/blob/main/install.html)**  
+          *(Open the link above in Safari, then tap **Install App**)*
 
-          *Alternatively, open [install.html](https://raw.githubusercontent.com/MrImmortal09/txntrace/main/install.html) in Safari.*
+          ---
+
+          ### Option 2: Direct itms-services Link (Copy & Paste)
+          Copy the link below and paste it directly into **Safari's address bar** on your registered iPhone:
+
+          \`\`\`text
+          $OTA_LINK
+          \`\`\`
+
+          *(Copy the code block above &rarr; Open Safari &rarr; Paste into URL bar &rarr; Tap **Go** &rarr; Tap **Install**)*
+
+          ---
+
+          ### Option 3: Version-Specific Install Link (v${{ env.NEW_VERSION }})
+          \`\`\`text
+          itms-services://?action=download-manifest&url=https%3A%2F%2Fraw.githubusercontent.com%2FMrImmortal09%2Ftxntrace%2F${TAG}%2Fmanifest.plist
+          \`\`\`
 
           ---
 
