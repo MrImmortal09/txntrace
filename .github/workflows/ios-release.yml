@@ -67,12 +67,10 @@ jobs:
           fi
           echo "Building version: $VERSION"
 
-      - name: Setup Ruby & CocoaPods
-        working-directory: ./app
+      - name: Install CocoaPods
+        working-directory: ./app/ios
         run: |
-          bundle install
-          cd ios
-          bundle exec pod install --repo-update || pod install --repo-update
+          pod install --repo-update
 
       - name: Install Apple Certificate and Provisioning Profile
         env:
