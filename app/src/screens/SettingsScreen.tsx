@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Linking, Platform, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Contacts from 'react-native-contacts';
+import SharedSMSStore from 'shared-sms-store';
 import { db } from '../db/schema';
 import {
   syncFromServer,
@@ -30,6 +31,20 @@ const SettingsScreen = () => {
 
 
 
+  const openShortcuts = () => {
+    Linking.openURL('shortcuts://').catch(() => {
+      log('Could not open Shortcuts app — open it manually from your home screen.');
+    });
+  };
+
+  const openMessagesSettings = () => {
+    if (Platform.OS === 'ios') {
+      Linking.openURL('App-Prefs:root=MESSAGES').catch(() => {
+        Linking.openSettings();
+      });
+    }
+  };
+
   const log = (msg: string) => {
     console.log('[TxnTrace Debug]', msg);
     setDebugLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
@@ -39,7 +54,50 @@ const SettingsScreen = () => {
     setDebugLog([]);
     log('--- Starting diagnostics ---');
 
-    // Step 1: Check DB
+    if (Platform.OS === 'ios') {
+      // Step 1: Write/read test to confirm App Group works from main app
+      try {
+        const result = await SharedSMSStore.writeTestValue();
+        log(`App Group write/read: ${result} ✅`);
+      } catch (e: any) {
+        log(`App Group FAILED ❌: ${e.message}`);
+      }
+
+      // Step 2: Per-path ingestion health
+      try {
+        const stats = await SharedSMSStore.getIngestStats();
+        log(`Shortcut last ran: ${stats.shortcutLastRun}`);
+        log(`Pending from Shortcut: ${stats.pendingFromShortcut}`);
+        log(`Extension last ran: ${stats.extensionLastRun}`);
+        log(`Pending from Extension: ${stats.pendingFromExtension}`);
+        log(`Inbox file exists: ${stats.inboxExists ? 'yes ✅' : 'no'}`);
+        if (stats.shortcutLastRun === 'never') {
+          log('→ Automation has never fired. Check the Shortcuts setup above.');
+        }
+      } catch (e: any) {
+        log(`getIngestStats FAILED: ${e.message}`);
+      }
+
+      // Step 3: Peek at messages WITHOUT clearing them
+      try {
+        const messages = await SharedSMSStore.peekMessages();
+        if (!Array.isArray(messages)) {
+          log(`Messages in store: NOT AN ARRAY (${JSON.stringify(messages)})`);
+        } else if (messages.length === 0) {
+          log('Messages in store: none pending — nothing waiting to be drained.');
+        } else {
+          log(`Messages in store: ${messages.length} pending`);
+          messages.forEach((m: any, i: number) => {
+            log(`  [${i}] source=${m.source ?? 'unknown'} sender=${m.sender || '(none)'} at=${m.receivedAt || '?'}`);
+            log(`      "${(m.body || '').slice(0, 140)}${(m.body || '').length > 140 ? '…' : ''}"`);
+          });
+        }
+      } catch (e: any) {
+        log(`peekMessages FAILED: ${e.message}`);
+      }
+    }
+
+    // Step 4: Check DB
     try {
       const res = await db.execute('SELECT COUNT(*) as count FROM transactions');
       const rows: any = res.rows;
@@ -150,6 +208,67 @@ const SettingsScreen = () => {
           </TouchableOpacity>
         </View>
       </View>
+
+      {Platform.OS === 'ios' && (
+        <>
+          <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>1. Shortcuts automation</Text>
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way TxnTrace sees your bank SMS</Text>
+            <Text style={[styles.description, { color: colors.textSecondary }]}>
+              iOS has no API for reading messages directly, so you hand them to TxnTrace with a
+              one-time automation. It runs in the background — nothing opens, nothing
+              is sent anywhere.
+            </Text>
+
+            <View style={[styles.instructions, { backgroundColor: colors.background, borderColor: colors.border }]}>
+              <Text style={[styles.instructionsText, { color: colors.textSecondary }]}>
+                1. Open Shortcuts → Automation tab{'\n'}
+                2. Tap + → Message{'\n'}
+                3. Leave Sender and Message empty to catch every bank{'\n'}
+                4. Turn on Run Immediately, turn off Notify When Run{'\n'}
+                5. New Blank Automation → add action “Save Transaction SMS”{'\n'}
+                6. Set its Message field to the Shortcut Input variable
+              </Text>
+            </View>
+
+            <View style={[styles.callout, { backgroundColor: colors.background, borderLeftColor: colors.danger }]}>
+              <Text style={[styles.calloutText, { color: colors.textSecondary }]}>
+                Only messages received after setup are captured — there is no way to
+                import your SMS history.
+              </Text>
+            </View>
+
+            <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={openShortcuts}>
+              <Text style={styles.buttonText}>Open Shortcuts</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>2. Message filter (backup)</Text>
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>Optional — kept for the upcoming server-side path</Text>
+            <Text style={[styles.description, { color: colors.textSecondary }]}>
+              The filter extension sits in the message delivery path, so it misses less
+              than an automation.
+            </Text>
+
+            <View style={[styles.instructions, { backgroundColor: colors.background, borderColor: colors.border }]}>
+              <Text style={[styles.instructionsText, { color: colors.textSecondary }]}>
+                1. Open the Settings app{'\n'}
+                2. Go to Messages{'\n'}
+                3. Tap on Unknown & Spam{'\n'}
+                4. Enable TxnTraceSMSFilter under SMS Filtering
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.button, styles.buttonSecondary, { borderColor: colors.border }]}
+              onPress={openMessagesSettings}
+            >
+              <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Open Messages Settings</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
 
 
 
