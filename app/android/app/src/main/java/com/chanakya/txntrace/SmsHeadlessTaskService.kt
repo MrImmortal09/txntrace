@@ -22,7 +22,7 @@ class SmsHeadlessTaskService : HeadlessJsTaskService() {
             return HeadlessJsTaskConfig(
                 "SmsTask",
                 params,
-                5000, // timeout for the task
+                15000L, // timeout for the task (allows cold-start RN context initialization)
                 true // optional: allowedInForeground
             )
         }

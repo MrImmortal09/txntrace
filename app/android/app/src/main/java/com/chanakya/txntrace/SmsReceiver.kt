@@ -17,12 +17,14 @@ class SmsReceiver : BroadcastReceiver() {
 
         try {
             val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-            if (messages.isEmpty()) return
+            if (messages.isNullOrEmpty()) return
 
             // Standard Android SMS chunks are split into array elements.
             // For a single SMS, we join the bodies.
-            val sender = messages[0]?.displayOriginatingAddress ?: return
             val body = messages.joinToString(separator = "") { it?.displayMessageBody ?: "" }
+            if (body.isBlank()) return
+
+            val sender = messages[0]?.displayOriginatingAddress ?: messages[0]?.originatingAddress ?: ""
             val timestamp = messages[0]?.timestampMillis ?: System.currentTimeMillis()
 
             val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
