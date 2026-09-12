@@ -8,6 +8,8 @@
   <h1 class="text-2xl font-bold text-gray-900">{{ contact_name }}</h1>
   {% if owed > 0 %}
   <span class="text-base font-bold text-orange-500">owes you ₹{{ '%.2f' | format(owed) }}</span>
+  {% elif owed < 0 %}
+  <span class="text-base font-bold text-red-500">you owe ₹{{ '%.2f' | format(-owed) }}</span>
   {% else %}
   <span class="text-base font-semibold text-credit">settled up</span>
   {% endif %}

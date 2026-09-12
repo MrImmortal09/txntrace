@@ -2,6 +2,11 @@ import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView, Animated, PanResponder } from 'react-native';
 import Contacts from 'react-native-contacts';
 import { db } from '../db/schema';
+import {
+  createSplit,
+  autoMatchCreditTransaction,
+  matchCreditToContact,
+} from '../services/settlements';
 
 const SWIPE_THRESHOLD = 100;
 
@@ -77,16 +82,13 @@ const ReviewScreen = () => {
 
     try {
       await db.execute(
-        'UPDATE transactions SET category = ?, note = ?, reviewed = 1, updated_at = ? WHERE id = ?',
+        'UPDATE transactions SET category = ?, note = ?, reviewed = 1, needs_contact_match = 0, updated_at = ? WHERE id = ?',
         [selectedCategoryId, note, new Date().toISOString(), txn.id]
       );
 
       // Save splits if any
       for (const split of selectedContacts) {
-        await db.execute(
-          'INSERT INTO splits (id, transaction_id, contact_id, contact_name, amount_owed) VALUES (?, ?, ?, ?, ?)',
-          [String(Date.now() + Math.random()), txn.id, split.id, split.name, split.amountOwed]
-        );
+        await createSplit(txn.id, split.id, split.name, split.amountOwed);
       }
     } catch (error) {
       console.error('Failed to update transaction', error);
@@ -172,7 +174,42 @@ const ReviewScreen = () => {
     ? sortedContacts.filter(c => nameOfContact(c).toLowerCase().includes(contactQuery.toLowerCase()))
     : sortedContacts;
 
-  const toggleContactSelection = (contact: any) => {
+  const handleMarkCreditForFriend = async () => {
+    const txn = txns[currentIndex];
+    if (!txn) return;
+    try {
+      const result = await autoMatchCreditTransaction(txn);
+      if (result.matched) {
+        Alert.alert('Auto-Matched', `Matched to ${result.contactName}`);
+        handleCardChange(currentIndex + 1);
+        return;
+      }
+    } catch (err) {
+      console.error('Auto match check failed:', err);
+    }
+    openSplitModal();
+  };
+
+  const toggleContactSelection = async (contact: any) => {
+    const currentTxn = txns[currentIndex];
+    if (currentTxn && currentTxn.type === 'credit') {
+      const name = nameOfContact(contact);
+      try {
+        await matchCreditToContact(
+          currentTxn.id,
+          currentTxn.merchant_raw,
+          contact.recordID,
+          name,
+          currentTxn.amount
+        );
+      } catch (err) {
+        console.error('Failed to match credit:', err);
+      }
+      setSplitModalVisible(false);
+      handleCardChange(currentIndex + 1);
+      return;
+    }
+
     const exists = selectedContacts.find(c => c.id === contact.recordID);
     let newSelection;
     if (exists) {
@@ -185,7 +222,6 @@ const ReviewScreen = () => {
     // Auto equal split — divided only among selected contacts, not assuming
     // the payer is also part of the split. Add yourself (you're in your own
     // Contacts) if this expense should include you too.
-    const currentTxn = txns[currentIndex];
     if (newSelection.length > 0 && currentTxn) {
       const splitAmount = currentTxn.amount / newSelection.length;
       newSelection = newSelection.map(c => ({ ...c, amountOwed: Number(splitAmount.toFixed(2)) }));
@@ -261,16 +297,33 @@ const ReviewScreen = () => {
           />
 
           <View style={styles.row}>
-            <TouchableOpacity style={styles.splitButton} onPress={openSplitModal}>
-              <Text style={styles.splitButtonText}>Split this ({selectedContacts.length})</Text>
-            </TouchableOpacity>
+            {currentTxn.type === 'credit' ? (
+              <>
+                <TouchableOpacity style={styles.splitButton} onPress={handleMarkCreditForFriend}>
+                  <Text style={styles.splitButtonText}>For a Friend</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.reviewButton}
-              onPress={() => advance(1)}
-            >
-              <Text style={styles.reviewButtonText}>Review & Next</Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.reviewButton}
+                  onPress={() => advance(1)}
+                >
+                  <Text style={styles.reviewButtonText}>Mark as Mine</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity style={styles.splitButton} onPress={openSplitModal}>
+                  <Text style={styles.splitButtonText}>Split this ({selectedContacts.length})</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.reviewButton}
+                  onPress={() => advance(1)}
+                >
+                  <Text style={styles.reviewButtonText}>Review & Next</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       )}
@@ -279,7 +332,9 @@ const ReviewScreen = () => {
       <Modal visible={splitModalVisible} animationType="slide" presentationStyle="pageSheet">
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Split with Contacts</Text>
+            <Text style={styles.modalTitle}>
+              {currentTxn?.type === 'credit' ? 'Match Credit with Friend' : 'Split with Contacts'}
+            </Text>
             <TouchableOpacity onPress={() => setSplitModalVisible(false)}>
               <Text style={styles.doneText}>Done</Text>
             </TouchableOpacity>

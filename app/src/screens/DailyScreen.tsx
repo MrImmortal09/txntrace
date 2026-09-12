@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Line } from 'react-native-svg';
 import { db } from '../db/schema';
@@ -8,8 +8,14 @@ import SwipeableRow from '../components/SwipeableRow';
 import SplitModal from '../components/SplitModal';
 import BankIcon from '../components/BankIcon';
 import PasteSMSModal from '../components/PasteSMSModal';
+import ContactPickerModal, { PickedContact } from '../components/ContactPickerModal';
 import { useTheme } from '../theme/ThemeProvider';
 import { checkNewMessages } from '../services/smsIngest';
+import {
+  autoMatchCreditTransaction,
+  matchCreditToContact,
+  markTransactionAsMine,
+} from '../services/settlements';
 
 type Transaction = TransactionRow;
 
@@ -18,6 +24,7 @@ const DailyScreen = () => {
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [splitting, setSplitting] = useState<Transaction | null>(null);
+  const [friendMatchingTxn, setFriendMatchingTxn] = useState<Transaction | null>(null);
   const [pasteModalVisible, setPasteModalVisible] = useState(false);
 
   const load = useCallback(async () => {
@@ -45,12 +52,36 @@ const DailyScreen = () => {
   const confirmMine = async (txn: Transaction) => {
     setTxns(prev => prev.filter(t => t.id !== txn.id));
     try {
-      await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
-        new Date().toISOString(),
-        txn.id,
-      ]);
+      await markTransactionAsMine(txn.id);
     } catch (error) {
-      console.error('Failed to confirm transaction:', error);
+      console.error('Failed to confirm transaction as mine:', error);
+      load();
+    }
+  };
+
+  const handleMarkForFriend = async (txn: Transaction) => {
+    try {
+      const result = await autoMatchCreditTransaction(txn);
+      if (result.matched) {
+        setTxns(prev => prev.filter(t => t.id !== txn.id));
+        Alert.alert('Auto-Matched', `Matched to ${result.contactName}`);
+        return;
+      }
+    } catch (err) {
+      console.error('Auto match check failed:', err);
+    }
+    setFriendMatchingTxn(txn);
+  };
+
+  const handlePickFriendForCredit = async (contact: PickedContact) => {
+    if (!friendMatchingTxn) return;
+    const target = friendMatchingTxn;
+    setFriendMatchingTxn(null);
+    setTxns(prev => prev.filter(t => t.id !== target.id));
+    try {
+      await matchCreditToContact(target.id, target.merchant_raw, contact.id, contact.name, target.amount);
+    } catch (err) {
+      console.error('Failed to match credit to friend:', err);
       load();
     }
   };
@@ -113,9 +144,29 @@ const DailyScreen = () => {
                     {item.type === 'credit' ? '+' : '-'}₹{item.amount.toFixed(2)}
                   </Text>
                   <View style={styles.actions}>
-                    <TouchableOpacity style={[styles.splitButton, { backgroundColor: colors.primary }]} onPress={() => setSplitting(item)}>
-                      <Text style={styles.actionButtonText}>Split</Text>
-                    </TouchableOpacity>
+                    {item.type === 'credit' ? (
+                      <>
+                        <TouchableOpacity
+                          style={[styles.mineButton, { borderColor: colors.border }]}
+                          onPress={() => confirmMine(item)}
+                        >
+                          <Text style={[styles.mineButtonText, { color: colors.textSecondary }]}>Mine</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.friendButton, { backgroundColor: colors.primary }]}
+                          onPress={() => handleMarkForFriend(item)}
+                        >
+                          <Text style={styles.actionButtonText}>Friend</Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <TouchableOpacity
+                        style={[styles.splitButton, { backgroundColor: colors.primary }]}
+                        onPress={() => setSplitting(item)}
+                      >
+                        <Text style={styles.actionButtonText}>Split</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
               </View>
@@ -142,6 +193,12 @@ const DailyScreen = () => {
         visible={pasteModalVisible}
         onClose={() => setPasteModalVisible(false)}
         onSuccess={load}
+      />
+      <ContactPickerModal
+        visible={!!friendMatchingTxn}
+        title={friendMatchingTxn ? `Who sent ₹${friendMatchingTxn.amount.toFixed(2)}?` : ''}
+        onCancel={() => setFriendMatchingTxn(null)}
+        onSelect={handlePickFriendForCredit}
       />
     </SafeAreaView>
   );
@@ -194,6 +251,22 @@ const styles = StyleSheet.create({
   amount: { fontSize: 15, fontWeight: 'bold' },
   actions: { flexDirection: 'row', gap: 6 },
   splitButton: { borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
+  mineButton: {
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mineButtonText: { fontSize: 13, fontWeight: '600' },
+  friendButton: {
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   actionButtonText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });
 
