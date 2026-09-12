@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking, Platform, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, Platform, ScrollView, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Contacts from 'react-native-contacts';
 import SharedSMSStore from 'shared-sms-store';
@@ -11,6 +11,10 @@ import {
   syncSplitsFromServer,
   syncSplitsToServer,
   syncSettlementsToServer,
+  syncSettlementsFromServer,
+  checkServerBackupStatus,
+  backupLocalToServer,
+  restoreFromServer,
   getAuthToken,
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
@@ -23,7 +27,10 @@ const SettingsScreen = () => {
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [reparsing, setReparsing] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'sync' | 'backup' | null>(null);
 
   useEffect(() => {
     // No need to load serverUrl anymore
@@ -113,6 +120,7 @@ const SettingsScreen = () => {
   const handleSync = async () => {
     const token = await getAuthToken();
     if (!token) {
+      setPendingAction('sync');
       setShowLoginModal(true);
       return;
     }
@@ -147,14 +155,118 @@ const SettingsScreen = () => {
       const { count: splitsPushed } = await syncSplitsToServer();
       const { count: settlementsPushed } = await syncSettlementsToServer();
       const { imported: splitsImported } = await syncSplitsFromServer();
+      const { imported: settlementsImported } = await syncSettlementsFromServer();
       log(
         `Synced from web ✅ — ${imported} new transaction(s), ${count} card(s)/account(s)${contactsMsg}, ` +
-          `${splitsImported} new split(s), ${splitsPushed} split(s) + ${settlementsPushed} settlement(s) pushed.`
+          `${splitsImported} new split(s), ${settlementsImported} new settlement(s), ` +
+          `${splitsPushed} split(s) + ${settlementsPushed} settlement(s) pushed.`
       );
     } catch (e: any) {
       log(`Sync FAILED ❌: ${e.message}`);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const executePullServer = async () => {
+    setRestoring(true);
+    try {
+      const res = await restoreFromServer();
+      Alert.alert(
+        'Server Data Restored',
+        `Successfully pulled server data:\n• ${res.transactions} transaction(s)\n• ${res.splits} split(s)\n• ${res.settlements} settlement(s)\n• ${res.cards} card(s)`,
+      );
+      log(
+        `Server data pulled ✅ — ${res.transactions} txn(s), ${res.splits} split(s), ` +
+          `${res.settlements} settlement(s), ${res.cards} card(s)`
+      );
+    } catch (e: any) {
+      Alert.alert('Pull Failed', e.message || 'Failed to pull server data.');
+      log(`Pull server FAILED ❌: ${e.message}`);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const executeBackupToServer = async (isOverwrite = true) => {
+    setBackingUp(true);
+    try {
+      let contactsPayload: { id: string; name: string }[] = [];
+      try {
+        const permission = await Contacts.requestPermission();
+        if (permission === 'authorized') {
+          const all = await Contacts.getAll();
+          contactsPayload = all.map(c => ({
+            id: c.recordID,
+            name: c.displayName || `${c.givenName} ${c.familyName}`.trim(),
+          }));
+        }
+      } catch (e: any) {
+        log(`Contacts skipped during backup: ${e.message}`);
+      }
+
+      const res = await backupLocalToServer({
+        overwrite: isOverwrite,
+        contacts: contactsPayload,
+      });
+
+      Alert.alert(
+        'Backup Successful',
+        `Local data backed up to server:\n• ${res.transactions} transaction(s)\n• ${res.splits} split(s)\n• ${res.settlements} settlement(s)\n• ${res.cards} card(s)`,
+      );
+      log(
+        `Backup to server ✅ — ${res.transactions} transaction(s), ${res.splits} split(s), ` +
+          `${res.settlements} settlement(s), ${res.cards} card(s)`
+      );
+    } catch (e: any) {
+      Alert.alert('Backup Failed', e.message || 'Failed to backup to server.');
+      log(`Backup FAILED ❌: ${e.message}`);
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
+  const handleBackup = async () => {
+    const token = await getAuthToken();
+    if (!token) {
+      setPendingAction('backup');
+      setShowLoginModal(true);
+      return;
+    }
+
+    setBackingUp(true);
+    try {
+      const status = await checkServerBackupStatus();
+      if (status.exists) {
+        setBackingUp(false);
+        Alert.alert(
+          'Server Data Found',
+          `Existing data was found on the server (${status.transactionCount} transaction(s), ${status.splitCount} split(s), ${status.settlementCount} settlement(s)).\n\nDo you want to keep the server data or overwrite it with your local data?`,
+          [
+            {
+              text: 'Keep Server Data',
+              onPress: () => executePullServer(),
+            },
+            {
+              text: 'Overwrite with Local',
+              style: 'destructive',
+              onPress: () => executeBackupToServer(true),
+            },
+            {
+              text: 'Cancel',
+              style: 'cancel',
+              onPress: () => setBackingUp(false),
+            },
+          ],
+          { cancelable: true, onDismiss: () => setBackingUp(false) }
+        );
+      } else {
+        await executeBackupToServer(false);
+      }
+    } catch (e: any) {
+      setBackingUp(false);
+      Alert.alert('Backup Error', e.message || 'Could not verify server backup status.');
+      log(`Backup check FAILED ❌: ${e.message}`);
     }
   };
 
@@ -273,19 +385,43 @@ const SettingsScreen = () => {
 
 
       <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Sync with Web</Text>
-        <Text style={[styles.hint, { color: colors.textSecondary }]}>Pulls in statements and splits from the web app, and pushes your contacts and friend activity up so the web's Friends page matches this one</Text>
-        <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={handleSync} disabled={syncing}>
-          <Text style={styles.buttonText}>{syncing ? 'Syncing…' : 'Sync now'}</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Cloud Backup & Sync</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>
+          Backup all your local transactions and activity to the server, or pull existing server data. Also syncs statements and splits with the web app.
+        </Text>
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: colors.primary }]}
+          onPress={handleBackup}
+          disabled={backingUp || restoring || syncing}
+        >
+          <Text style={styles.buttonText}>
+            {restoring ? 'Restoring…' : backingUp ? 'Backing up…' : 'Backup to Server'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, { borderColor: colors.border, marginTop: 10 }]}
+          onPress={handleSync}
+          disabled={backingUp || restoring || syncing}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>{syncing ? 'Syncing…' : 'Sync with Web'}</Text>
         </TouchableOpacity>
       </View>
 
       <OTPLoginModal 
         visible={showLoginModal} 
-        onClose={() => setShowLoginModal(false)}
+        onClose={() => {
+          setShowLoginModal(false);
+          setPendingAction(null);
+        }}
         onSuccess={() => {
           setShowLoginModal(false);
-          handleSync();
+          if (pendingAction === 'backup') {
+            setPendingAction(null);
+            handleBackup();
+          } else {
+            setPendingAction(null);
+            handleSync();
+          }
         }}
       />
 
