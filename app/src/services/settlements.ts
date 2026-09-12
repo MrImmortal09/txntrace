@@ -195,37 +195,23 @@ export const settleDebtToFriend = async (
   amount: number,
   transactionId?: string
 ): Promise<void> => {
-  const creditRes = await db.execute(
-    `SELECT id, unapplied_amount FROM settlements
-     WHERE contact_id = ? AND unapplied_amount > 0
-     ORDER BY date ASC`,
-    [contactId]
-  );
-  const rows: any = creditRes.rows;
-  const credits = rows?._array || rows || [];
-
-  let remaining = amount;
-  for (const c of credits) {
-    if (remaining <= 0) break;
-    const currentUnapplied = Number(c.unapplied_amount || 0);
-    if (currentUnapplied <= 0) continue;
-
-    if (currentUnapplied >= remaining) {
-      const nextUnapplied = Number((currentUnapplied - remaining).toFixed(2));
-      await db.execute('UPDATE settlements SET unapplied_amount = ? WHERE id = ?', [nextUnapplied, c.id]);
-      remaining = 0;
-    } else {
-      remaining = Number((remaining - currentUnapplied).toFixed(2));
-      await db.execute('UPDATE settlements SET unapplied_amount = 0 WHERE id = ?', [c.id]);
-    }
+  let txnId = transactionId;
+  const now = new Date().toISOString();
+  if (!txnId) {
+    txnId = `manual_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    await db.execute(
+      `INSERT INTO transactions (id, bank, amount, type, merchant_raw, date, source, reviewed, created_at, updated_at)
+       VALUES (?, NULL, ?, 'debit', ?, ?, 'manual', 1, ?, ?)`,
+      [txnId, amount, `Paid back ${contactName}`, now, now, now]
+    );
   }
 
-  if (transactionId) {
-    await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
-      new Date().toISOString(),
-      transactionId,
-    ]);
-  }
+  await createSplit(txnId, contactId, contactName, amount);
+
+  await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
+    now,
+    txnId,
+  ]);
 };
 
 /**
@@ -289,7 +275,11 @@ export const autoMatchCreditTransaction = async (
     const candidates = rows?._array || rows || [];
     if (candidates.length > 0 && candidates[0].contact_id) {
       const match = candidates[0];
-      await matchNameToContact(rawName, match.contact_id, match.contact_name);
+      await db.execute(
+        `INSERT OR REPLACE INTO contact_aliases (id, normalized_name, raw_name, contact_id, contact_name, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [normalized, normalized, rawName, match.contact_id, match.contact_name, new Date().toISOString()]
+      );
       const { unappliedAmount } = await applySettlement(match.contact_id, match.contact_name, txn.amount, txn.id);
       return {
         matched: true,
@@ -302,7 +292,8 @@ export const autoMatchCreditTransaction = async (
 
   // 3. Check device contacts
   try {
-    const ContactsModule = require('react-native-contacts').default;
+    const Contacts = require('react-native-contacts');
+    const ContactsModule = Contacts.default || Contacts;
     const perm = await ContactsModule.checkPermission();
     if (perm === 'authorized' && rawName) {
       const allContacts = await ContactsModule.getAll();
@@ -313,7 +304,11 @@ export const autoMatchCreditTransaction = async (
       });
       if (matched) {
         const contactName = matched.displayName || `${matched.givenName || ''} ${matched.familyName || ''}`.trim();
-        await matchNameToContact(rawName, matched.recordID, contactName);
+        await db.execute(
+          `INSERT OR REPLACE INTO contact_aliases (id, normalized_name, raw_name, contact_id, contact_name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [normRaw, normRaw, rawName, matched.recordID, contactName, new Date().toISOString()]
+        );
         const { unappliedAmount } = await applySettlement(matched.recordID, contactName, txn.amount, txn.id);
         return {
           matched: true,

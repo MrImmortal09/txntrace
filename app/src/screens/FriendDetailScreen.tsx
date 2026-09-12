@@ -29,7 +29,7 @@ const FriendDetailScreen = () => {
   const loadHistory = useCallback(async () => {
     try {
       const splitsRes = await db.execute(
-        `SELECT s.id, s.transaction_id, s.amount_owed, t.amount as txn_amount, s.settled, t.date, t.merchant_raw
+        `SELECT s.id, s.transaction_id, s.amount_owed, COALESCE(s.original_amount, s.amount_owed, t.amount) as split_amount, s.settled, t.date, t.merchant_raw
          FROM splits s JOIN transactions t ON t.id = s.transaction_id
          WHERE s.contact_id = ? ORDER BY t.date DESC`,
         [contactId]
@@ -40,7 +40,7 @@ const FriendDetailScreen = () => {
         id: r.id,
         transactionId: r.transaction_id,
         date: r.date,
-        amount: r.txn_amount,
+        amount: r.split_amount,
         amountOwed: r.amount_owed,
         merchant: r.merchant_raw,
         settled: !!r.settled,
@@ -159,6 +159,8 @@ const FriendDetailScreen = () => {
                 <Text style={styles.rowTitle}>
                   {item.kind === 'settlement'
                     ? `${contactName} paid you`
+                    : item.merchant?.toLowerCase().startsWith('paid back')
+                    ? `You paid back ${contactName}`
                     : `You paid for ${item.merchant || 'a shared expense'}`}
                 </Text>
                 <Text style={styles.rowMeta}>

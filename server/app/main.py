@@ -419,7 +419,7 @@ async def api_sync_settlements_from_phone(payload: dict[str, Any], user_id: str 
                     s.get("contact_id"),
                     s.get("contact_name"),
                     s.get("amount"),
-                    s.get("unapplied_amount", 0),
+                    s.get("unapplied_amount") or 0,
                     s.get("transaction_id"),
                     s.get("matched_split_id"),
                     s.get("date"),
@@ -435,21 +435,24 @@ def friends_page(request: Request):
     user_id = get_web_user(request)
     if not user_id: return RedirectResponse("/login")
     with get_db() as conn:
-        # Mirrors the mobile app's own FriendsScreen query: a friend's
-        # identity comes from contact_name denormalized on splits/
-        # settlements, not a join to `contacts` — a phone-authored split
-        # references a real contact, but the corresponding row in the
-        # phone-only-authored `contacts` mirror may not (yet) reflect it.
+        # Mirrors the mobile app's own FriendsScreen query: combines contacts
+        # from both splits and settlements so advance credits or credit-only
+        # contacts are never omitted.
         rows = conn.execute(
-            """SELECT contact_id, MAX(contact_name) as contact_name,
-                 COALESCE(SUM(amount_owed) FILTER (WHERE settled = 0), 0) -
-                 COALESCE((SELECT SUM(unapplied_amount) FROM settlements st WHERE st.contact_id = splits.contact_id AND st.user_id = %s), 0) as owed
-               FROM splits
-               WHERE user_id = %s
-               GROUP BY contact_id
-               ORDER BY ABS(COALESCE(SUM(amount_owed) FILTER (WHERE settled = 0), 0) -
-                 COALESCE((SELECT SUM(unapplied_amount) FROM settlements st WHERE st.contact_id = splits.contact_id AND st.user_id = %s), 0)) DESC, contact_name ASC""",
-            (user_id, user_id, user_id),
+            """SELECT c.contact_id, MAX(c.contact_name) as contact_name,
+                 COALESCE((SELECT SUM(amount_owed) FROM splits s WHERE s.contact_id = c.contact_id AND s.user_id = %s AND s.settled = 0), 0) -
+                 COALESCE((SELECT SUM(unapplied_amount) FROM settlements st WHERE st.contact_id = c.contact_id AND st.user_id = %s), 0) as owed
+               FROM (
+                 SELECT contact_id, contact_name FROM splits WHERE user_id = %s
+                 UNION
+                 SELECT contact_id, contact_name FROM settlements WHERE user_id = %s
+               ) c
+               GROUP BY c.contact_id
+               ORDER BY ABS(
+                 COALESCE((SELECT SUM(amount_owed) FROM splits s WHERE s.contact_id = c.contact_id AND s.user_id = %s AND s.settled = 0), 0) -
+                 COALESCE((SELECT SUM(unapplied_amount) FROM settlements st WHERE st.contact_id = c.contact_id AND st.user_id = %s), 0)
+               ) DESC, contact_name ASC""",
+            (user_id, user_id, user_id, user_id, user_id, user_id),
         ).fetchall()
     return templates.TemplateResponse(request, "friends.html", {"friends": [dict(r) for r in rows]})
 

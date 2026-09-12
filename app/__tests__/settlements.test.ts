@@ -1,6 +1,21 @@
 import { normalizeName, applySettlement, createSplit, settleDebtToFriend, autoMatchCreditTransaction, markTransactionAsMine } from '../src/services/settlements';
 import { db } from '../src/db/schema';
 
+// Mock react-native-contacts
+jest.mock('react-native-contacts', () => ({
+  __esModule: true,
+  default: {
+    checkPermission: jest.fn(async () => 'authorized'),
+    getAll: jest.fn(async () => [
+      { recordID: 'c_phone_1', displayName: 'Priya Patel', givenName: 'Priya', familyName: 'Patel' },
+    ]),
+  },
+  checkPermission: jest.fn(async () => 'authorized'),
+  getAll: jest.fn(async () => [
+    { recordID: 'c_phone_1', displayName: 'Priya Patel', givenName: 'Priya', familyName: 'Patel' },
+  ]),
+}));
+
 // Mock SQLite db
 jest.mock('../src/db/schema', () => {
   const store: Record<string, any[]> = {
@@ -14,24 +29,20 @@ jest.mock('../src/db/schema', () => {
     db: {
       execute: jest.fn(async (query: string, params: any[] = []) => {
         const q = query.trim().toUpperCase();
+        const normalizedQ = q.replace(/\s+/g, ' ');
 
         if (q.startsWith('SELECT')) {
-          if (q.includes('FROM SPLITS') && q.includes('ORDER BY T.DATE ASC')) {
+          if (normalizedQ.includes('FROM SPLITS') && normalizedQ.includes('ORDER BY T.DATE ASC')) {
             const contactId = params[0];
             const openSplits = store.splits.filter(s => s.contact_id === contactId && s.settled === 0);
             return { rows: { _array: openSplits } };
           }
-          if (q.includes('FROM SETTLEMENTS') && q.includes('UNAPPLIED_AMOUNT > 0')) {
+          if (normalizedQ.includes('FROM SETTLEMENTS') && normalizedQ.includes('UNAPPLIED_AMOUNT > 0')) {
             const contactId = params[0];
             const credits = store.settlements.filter(s => s.contact_id === contactId && (s.unapplied_amount || 0) > 0);
             return { rows: { _array: credits } };
           }
-          if (q.includes('FROM CONTACT_ALIASES WHERE NORMALIZED_NAME = ?')) {
-            const norm = params[0];
-            const found = store.contact_aliases.filter(a => a.normalized_name === norm);
-            return { rows: { _array: found } };
-          }
-          if (q.includes('FROM ( SELECT CONTACT_ID, CONTACT_NAME FROM CONTACT_ALIASES')) {
+          if (normalizedQ.includes('FROM ( SELECT CONTACT_ID, CONTACT_NAME FROM CONTACT_ALIASES') || normalizedQ.includes('FROM (SELECT CONTACT_ID, CONTACT_NAME FROM CONTACT_ALIASES')) {
             const norm = params[0];
             const foundAlias = store.contact_aliases.find(a => a.normalized_name === norm);
             if (foundAlias) return { rows: { _array: [foundAlias] } };
@@ -41,11 +52,24 @@ jest.mock('../src/db/schema', () => {
             if (foundSettle) return { rows: { _array: [foundSettle] } };
             return { rows: { _array: [] } };
           }
-          if (q.includes('FROM TRANSACTIONS WHERE NEEDS_CONTACT_MATCH = 1')) {
+          if (normalizedQ.includes('FROM CONTACT_ALIASES WHERE NORMALIZED_NAME = ?')) {
+            const norm = params[0];
+            const found = store.contact_aliases.filter(a => a.normalized_name === norm);
+            return { rows: { _array: found } };
+          }
+          if (normalizedQ.includes('FROM TRANSACTIONS WHERE NEEDS_CONTACT_MATCH = 1')) {
             const raw = params[0];
             const txns = store.transactions.filter(t => t.needs_contact_match === 1 && t.merchant_raw === raw && t.type === 'credit');
             return { rows: { _array: txns } };
           }
+        }
+
+        if (q.startsWith('INSERT INTO TRANSACTIONS')) {
+          const [id, amount, merchant_raw, date, created_at, updated_at] = params;
+          store.transactions.push({
+            id, bank: null, amount, type: 'debit', merchant_raw, date, source: 'manual', reviewed: 1, created_at, updated_at
+          });
+          return { rowsAffected: 1 };
         }
 
         if (q.startsWith('INSERT INTO SETTLEMENTS')) {
@@ -217,7 +241,7 @@ describe('Settlement Balance & Overpayment Tracking', () => {
     expect(openSplits - unapplied).toBe(110);
   });
 
-  test('settleDebtToFriend clears unapplied debt when user repays friend', async () => {
+  test('settleDebtToFriend clears unapplied debt and records repayment split in ledger', async () => {
     mockDb.settlements.push({
       id: 'settle_1',
       contact_id: 'c1',
@@ -232,9 +256,44 @@ describe('Settlement Balance & Overpayment Tracking', () => {
 
     await settleDebtToFriend('c1', 'Anurag', 590, 'txn_repay_1');
     expect(mockDb.settlements[0].unapplied_amount).toBe(0);
+    expect(mockDb.splits.length).toBe(1);
+    expect(mockDb.splits[0].transaction_id).toBe('txn_repay_1');
+    expect(mockDb.splits[0].contact_id).toBe('c1');
+    expect(mockDb.splits[0].amount_owed).toBe(0);
+    expect(mockDb.splits[0].original_amount).toBe(590);
+    expect(mockDb.splits[0].settled).toBe(1);
   });
 
-  test('autoMatchCreditTransaction matches known contact and applies settlement', async () => {
+  test('settleDebtToFriend with excess repayment records remaining amount as owed by friend', async () => {
+    mockDb.settlements.push({
+      id: 'settle_1',
+      contact_id: 'c1',
+      contact_name: 'Anurag',
+      amount: 1000,
+      unapplied_amount: 590,
+      transaction_id: 'txn_credit_1',
+      matched_split_id: null,
+      date: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    });
+
+    // User owes 590, but pays 700 without specifying transactionId
+    await settleDebtToFriend('c1', 'Anurag', 700);
+
+    // Debt to friend cleared
+    expect(mockDb.settlements[0].unapplied_amount).toBe(0);
+    // Split created for 700 with 110 remaining owed by friend
+    expect(mockDb.splits.length).toBe(1);
+    expect(mockDb.splits[0].amount_owed).toBe(110);
+    expect(mockDb.splits[0].original_amount).toBe(700);
+    expect(mockDb.splits[0].settled).toBe(0);
+    // Manual transaction was created
+    expect(mockDb.transactions.length).toBe(1);
+    expect(mockDb.transactions[0].amount).toBe(700);
+    expect(mockDb.transactions[0].merchant_raw).toBe('Paid back Anurag');
+  });
+
+  test('autoMatchCreditTransaction matches known contact from alias and applies settlement', async () => {
     mockDb.contact_aliases.push({
       id: 'ANURAG YADAV',
       normalized_name: 'ANURAG YADAV',
@@ -254,6 +313,50 @@ describe('Settlement Balance & Overpayment Tracking', () => {
     expect(mockDb.settlements.length).toBe(1);
     expect(mockDb.settlements[0].amount).toBe(10000);
     expect(mockDb.settlements[0].unapplied_amount).toBe(10000);
+  });
+
+  test('autoMatchCreditTransaction matches known contact from splits and saves alias (Step 2)', async () => {
+    mockDb.splits.push({
+      id: 'split_old',
+      transaction_id: 'txn_exp_old',
+      contact_id: 'c2',
+      contact_name: 'Rohit Sharma',
+      amount_owed: 300,
+      original_amount: 300,
+      settled: 0,
+    });
+
+    const txn = { id: 'txn_credit_rohit', merchant_raw: 'Rohit Sharma', amount: 300 };
+    const result = await autoMatchCreditTransaction(txn);
+
+    expect(result.matched).toBe(true);
+    expect(result.contactId).toBe('c2');
+    expect(result.contactName).toBe('Rohit Sharma');
+    expect(result.unappliedAmount).toBe(0);
+    // Exactly 1 settlement inserted (no duplicate or crash)
+    expect(mockDb.settlements.length).toBe(1);
+    expect(mockDb.settlements[0].id).toBe('settle_txn_credit_rohit');
+    // Split is settled
+    expect(mockDb.splits[0].settled).toBe(1);
+    // Alias is saved for future auto-matches
+    expect(mockDb.contact_aliases.length).toBe(1);
+    expect(mockDb.contact_aliases[0].normalized_name).toBe('ROHIT SHARMA');
+  });
+
+  test('autoMatchCreditTransaction matches device contacts and saves alias (Step 3)', async () => {
+    const txn = { id: 'txn_credit_priya', merchant_raw: 'Priya Patel', amount: 500 };
+    const result = await autoMatchCreditTransaction(txn);
+
+    expect(result.matched).toBe(true);
+    expect(result.contactId).toBe('c_phone_1');
+    expect(result.contactName).toBe('Priya Patel');
+    expect(result.unappliedAmount).toBe(500);
+    // Exactly 1 settlement inserted
+    expect(mockDb.settlements.length).toBe(1);
+    expect(mockDb.settlements[0].id).toBe('settle_txn_credit_priya');
+    // Alias is saved
+    expect(mockDb.contact_aliases.length).toBe(1);
+    expect(mockDb.contact_aliases[0].normalized_name).toBe('PRIYA PATEL');
   });
 
   test('markTransactionAsMine sets reviewed = 1 and needs_contact_match = 0', async () => {
