@@ -710,6 +710,9 @@ async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_
                 t.get("sms_body"),
                 t.get("card_id"),
                 1 if t.get("needs_contact_match") else 0,
+                t.get("location"),
+                t.get("latitude"),
+                t.get("longitude"),
                 user_id,
             )
             for t in transactions
@@ -720,8 +723,8 @@ async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_
                 """INSERT INTO transactions
                    (id, bank, amount, type, merchant_raw, date, source, category, note,
                     reviewed, created_at, updated_at, reference, account_last4, balance,
-                    sender, sms_body, card_id, needs_contact_match, user_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    sender, sms_body, card_id, needs_contact_match, location, latitude, longitude, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                      bank = EXCLUDED.bank,
                      amount = EXCLUDED.amount,
@@ -741,6 +744,9 @@ async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_
                      sms_body = EXCLUDED.sms_body,
                      card_id = EXCLUDED.card_id,
                      needs_contact_match = EXCLUDED.needs_contact_match,
+                     location = EXCLUDED.location,
+                     latitude = EXCLUDED.latitude,
+                     longitude = EXCLUDED.longitude,
                      user_id = EXCLUDED.user_id
                    WHERE transactions.user_id = EXCLUDED.user_id OR transactions.user_id IS NULL""",
                 tx_records,

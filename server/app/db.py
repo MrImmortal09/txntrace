@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS transactions (
     sms_body TEXT,
     card_id TEXT,
     needs_contact_match INTEGER DEFAULT 0,
+    location TEXT,
+    latitude REAL,
+    longitude REAL,
     user_id TEXT
 );
 """
@@ -182,5 +185,8 @@ def init_db() -> None:
         conn.execute("ALTER TABLE settlements ADD COLUMN IF NOT EXISTS user_id TEXT")
         conn.execute("ALTER TABLE settlements ADD COLUMN IF NOT EXISTS unapplied_amount REAL DEFAULT 0")
         conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS needs_contact_match INTEGER DEFAULT 0")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS location TEXT")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS latitude REAL")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS longitude REAL")
         conn.execute("ALTER TABLE splits ADD COLUMN IF NOT EXISTS original_amount REAL")
         conn.execute("UPDATE splits SET original_amount = amount_owed WHERE original_amount IS NULL AND settled = 0")

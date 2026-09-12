@@ -2,40 +2,35 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
 import { useFocusEffect, useRoute } from '@react-navigation/native';
 import { db } from '../db/schema';
-import { settleDebtToFriend } from '../services/settlements';
+import { settleDebtToFriend, clearAllDebtsWithContact } from '../services/settlements';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
 import AddExpenseModal from '../components/AddExpenseModal';
+import EditDebtModal, { EditableLedgerEntry } from '../components/EditDebtModal';
+import { openLocationInGoogleMaps } from '../utils/maps';
+import { useTheme } from '../theme/ThemeProvider';
 
-interface LedgerEntry {
-  kind: 'split' | 'settlement';
-  id: string;
-  transactionId: string;
-  date: string;
-  amount: number;
-  amountOwed?: number; // splits only — the live remaining balance
-  unappliedAmount?: number; // settlements only — live remaining excess owed to friend
-  merchant: string | null;
-  settled: boolean;
-}
+export type LedgerEntry = EditableLedgerEntry;
 
 const FriendDetailScreen = () => {
+  const { colors } = useTheme();
   const route = useRoute<any>();
   const { contactId, contactName } = route.params;
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [balance, setBalance] = useState(0);
   const [selected, setSelected] = useState<TransactionRow | null>(null);
+  const [editingEntry, setEditingEntry] = useState<LedgerEntry | null>(null);
   const [addVisible, setAddVisible] = useState(false);
 
   const loadHistory = useCallback(async () => {
     try {
       const splitsRes = await db.execute(
-        `SELECT s.id, s.transaction_id, s.amount_owed, COALESCE(s.original_amount, s.amount_owed, t.amount) as split_amount, s.settled, t.date, t.merchant_raw
+        `SELECT s.id, s.transaction_id, s.amount_owed, COALESCE(s.original_amount, s.amount_owed, t.amount) as split_amount, s.settled, t.date, t.merchant_raw, t.location, t.latitude, t.longitude
          FROM splits s JOIN transactions t ON t.id = s.transaction_id
          WHERE s.contact_id = ? ORDER BY t.date DESC`,
         [contactId]
       );
       const splitRows: any = splitsRes.rows;
-      const splits = (splitRows?._array || splitRows || []).map((r: any) => ({
+      const splits: LedgerEntry[] = (splitRows?._array || splitRows || []).map((r: any) => ({
         kind: 'split' as const,
         id: r.id,
         transactionId: r.transaction_id,
@@ -44,14 +39,20 @@ const FriendDetailScreen = () => {
         amountOwed: r.amount_owed,
         merchant: r.merchant_raw,
         settled: !!r.settled,
+        location: r.location,
+        latitude: r.latitude,
+        longitude: r.longitude,
       }));
 
       const settlementsRes = await db.execute(
-        `SELECT id, transaction_id, amount, unapplied_amount, date FROM settlements WHERE contact_id = ? ORDER BY date DESC`,
+        `SELECT s.id, s.transaction_id, s.amount, s.unapplied_amount, s.date, t.location, t.latitude, t.longitude
+         FROM settlements s
+         LEFT JOIN transactions t ON t.id = s.transaction_id
+         WHERE s.contact_id = ? ORDER BY s.date DESC`,
         [contactId]
       );
       const settlementRows: any = settlementsRes.rows;
-      const settlements = (settlementRows?._array || settlementRows || []).map((r: any) => ({
+      const settlements: LedgerEntry[] = (settlementRows?._array || settlementRows || []).map((r: any) => ({
         kind: 'settlement' as const,
         id: r.id,
         transactionId: r.transaction_id,
@@ -60,6 +61,9 @@ const FriendDetailScreen = () => {
         unappliedAmount: r.unapplied_amount || 0,
         merchant: null,
         settled: true,
+        location: r.location,
+        latitude: r.latitude,
+        longitude: r.longitude,
       }));
 
       const combined = [...splits, ...settlements].sort(
@@ -108,7 +112,30 @@ const FriendDetailScreen = () => {
     );
   };
 
-  const openOriginalMessage = async (transactionId: string) => {
+  const handleClearAllDebts = () => {
+    Alert.alert(
+      'Clear All Debts',
+      `Clear all outstanding debts and balances with ${contactName}? All open splits will be marked settled.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearAllDebtsWithContact(contactId);
+              loadHistory();
+            } catch (err) {
+              console.error('Failed to clear debts:', err);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const openOriginalMessage = async (transactionId?: string | null) => {
+    if (!transactionId) return;
     try {
       const res = await db.execute('SELECT * FROM transactions WHERE id = ?', [transactionId]);
       const rows: any = res.rows;
@@ -119,23 +146,52 @@ const FriendDetailScreen = () => {
     }
   };
 
+  const formatDateTime = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <View style={styles.headerTop}>
-          <Text style={styles.name}>{contactName}</Text>
+          <Text style={[styles.name, { color: colors.text }]}>{contactName}</Text>
           <View style={styles.headerActions}>
             {balance < 0 && (
-              <TouchableOpacity style={styles.settleButton} onPress={handleSettleUp}>
+              <TouchableOpacity style={[styles.settleButton, { backgroundColor: colors.success }]} onPress={handleSettleUp}>
                 <Text style={styles.settleButtonText}>Settle Up</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={styles.addButton} onPress={() => setAddVisible(true)}>
+            {balance !== 0 && (
+              <TouchableOpacity
+                style={[styles.clearButton, { borderColor: colors.border }]}
+                onPress={handleClearAllDebts}
+              >
+                <Text style={[styles.clearButtonText, { color: colors.textSecondary }]}>Clear All</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.addButton, { backgroundColor: colors.primary }]}
+              onPress={() => setAddVisible(true)}
+            >
               <Text style={styles.addButtonText}>+</Text>
             </TouchableOpacity>
           </View>
         </View>
-        <Text style={balance > 0 ? styles.owedAmount : balance < 0 ? styles.youOweAmount : styles.settledText}>
+        <Text
+          style={[
+            styles.balanceText,
+            balance > 0
+              ? { color: colors.warning }
+              : balance < 0
+              ? { color: colors.danger }
+              : { color: colors.success },
+          ]}
+        >
           {balance > 0
             ? `owes you ₹${balance.toFixed(2)}`
             : balance < 0
@@ -146,7 +202,7 @@ const FriendDetailScreen = () => {
 
       {entries.length === 0 ? (
         <View style={styles.center}>
-          <Text style={styles.emptyText}>No history with {contactName} yet.</Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No history with {contactName} yet.</Text>
         </View>
       ) : (
         <FlatList
@@ -154,31 +210,76 @@ const FriendDetailScreen = () => {
           keyExtractor={item => `${item.kind}_${item.id}`}
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.row} onPress={() => openOriginalMessage(item.transactionId)}>
+            <TouchableOpacity
+              style={[styles.row, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}
+              onPress={() => setEditingEntry(item)}
+              activeOpacity={0.8}
+            >
               <View style={styles.rowInfo}>
-                <Text style={styles.rowTitle}>
+                <Text style={[styles.rowTitle, { color: colors.text }]}>
                   {item.kind === 'settlement'
                     ? `${contactName} paid you`
                     : item.merchant?.toLowerCase().startsWith('paid back')
                     ? `You paid back ${contactName}`
                     : `You paid for ${item.merchant || 'a shared expense'}`}
                 </Text>
-                <Text style={styles.rowMeta}>
-                  {new Date(item.date).toLocaleDateString()}
+                <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>
+                  {formatDateTime(item.date)}
                   {item.kind === 'split' && !item.settled ? ` · ₹${(item.amountOwed ?? item.amount).toFixed(2)} outstanding` : ''}
                   {item.kind === 'split' && item.settled ? ' · settled' : ''}
                   {item.kind === 'settlement' && item.unappliedAmount && item.unappliedAmount > 0
                     ? ` · ₹${item.unappliedAmount.toFixed(2)} remaining (you owe)`
                     : ''}
                 </Text>
+                {item.location ? (
+                  <TouchableOpacity
+                    style={styles.locationChip}
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      openLocationInGoogleMaps(item.location, item.latitude, item.longitude);
+                    }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Text style={[styles.locationChipText, { color: colors.primary }]} numberOfLines={1}>
+                      📍 {item.location} <Text style={styles.mapsLink}>↗</Text>
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
-              <Text style={[styles.rowAmount, item.kind === 'settlement' ? styles.credit : styles.debit]}>
-                {item.kind === 'settlement' ? '+' : '-'}₹{item.amount.toFixed(2)}
-              </Text>
+
+              <View style={styles.rowRight}>
+                <Text style={[styles.rowAmount, { color: item.kind === 'settlement' ? colors.success : colors.danger }]}>
+                  {item.kind === 'settlement' ? '+' : '-'}₹{item.amount.toFixed(2)}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.rowEditButton, { borderColor: colors.border }]}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    setEditingEntry(item);
+                  }}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Text style={[styles.rowEditText, { color: colors.primary }]}>Edit</Text>
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
           )}
         />
       )}
+
+      <EditDebtModal
+        visible={!!editingEntry}
+        entry={editingEntry}
+        contactName={contactName}
+        onClose={() => setEditingEntry(null)}
+        onSaved={() => {
+          setEditingEntry(null);
+          loadHistory();
+        }}
+        onViewTransaction={(txnId) => {
+          openOriginalMessage(txnId);
+        }}
+      />
 
       <TransactionDetailModal transaction={selected} onClose={() => setSelected(null)} />
 
@@ -197,48 +298,71 @@ const FriendDetailScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { padding: 20, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee' },
+  container: { flex: 1 },
+  header: { padding: 20, borderBottomWidth: 1 },
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  name: { fontSize: 24, fontWeight: 'bold', color: '#333' },
+  name: { fontSize: 24, fontWeight: 'bold' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   settleButton: {
-    backgroundColor: '#34C759',
     paddingVertical: 7,
     paddingHorizontal: 12,
     borderRadius: 8,
   },
   settleButtonText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  clearButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  clearButtonText: { fontSize: 12, fontWeight: '600' },
   addButton: {
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#007AFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   addButtonText: { color: '#fff', fontSize: 20, fontWeight: '600', lineHeight: 22 },
-  owedAmount: { fontSize: 16, fontWeight: '600', color: '#FF9500', marginTop: 4 },
-  youOweAmount: { fontSize: 16, fontWeight: '600', color: '#FF3B30', marginTop: 4 },
-  settledText: { fontSize: 16, fontWeight: '600', color: '#34C759', marginTop: 4 },
+  balanceText: { fontSize: 16, fontWeight: '600', marginTop: 4 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
-  emptyText: { color: '#999', fontSize: 15, textAlign: 'center' },
+  emptyText: { fontSize: 15, textAlign: 'center' },
   listContent: { padding: 16 },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 14,
     marginBottom: 10,
+    elevation: 2,
+    shadowOpacity: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 8,
   },
-  rowInfo: { flex: 1 },
-  rowTitle: { fontSize: 15, fontWeight: '600', color: '#333' },
-  rowMeta: { fontSize: 12, color: '#999', marginTop: 2 },
+  rowInfo: { flex: 1, marginRight: 12 },
+  rowTitle: { fontSize: 15, fontWeight: '600' },
+  rowMeta: { fontSize: 12, marginTop: 4 },
+  locationChip: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+  },
+  locationChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  mapsLink: {
+    fontSize: 11,
+  },
+  rowRight: { alignItems: 'flex-end', justifyContent: 'center', gap: 6 },
   rowAmount: { fontSize: 16, fontWeight: 'bold' },
-  debit: { color: '#FF3B30' },
-  credit: { color: '#34C759' },
+  rowEditButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  rowEditText: { fontSize: 12, fontWeight: '600' },
 });
 
 export default FriendDetailScreen;

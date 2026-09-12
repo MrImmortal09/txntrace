@@ -7,6 +7,7 @@ import {
   autoMatchCreditTransaction,
   matchCreditToContact,
 } from '../services/settlements';
+import { openLocationInGoogleMaps } from '../utils/maps';
 
 const SWIPE_THRESHOLD = 100;
 
@@ -19,6 +20,9 @@ interface Transaction {
   date: string;
   category?: string;
   note?: string;
+  location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 interface Category {
@@ -266,7 +270,18 @@ const ReviewScreen = () => {
               {currentTxn.type === 'credit' ? '+' : '-'}{currentTxn.amount}
             </Text>
             <Text style={styles.cardMerchant}>{currentTxn.merchant_raw}</Text>
-            <Text style={styles.cardDate}>{new Date(currentTxn.date).toLocaleDateString()}</Text>
+            <Text style={styles.cardDate}>
+              {new Date(currentTxn.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+            </Text>
+            {currentTxn.location ? (
+              <TouchableOpacity
+                style={styles.cardLocation}
+                onPress={() => openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.cardLocationText}>📍 {currentTxn.location} <Text style={styles.mapsLink}>↗</Text></Text>
+              </TouchableOpacity>
+            ) : null}
           </Animated.View>
         )}
       </View>
@@ -415,6 +430,9 @@ const styles = StyleSheet.create({
   debit: { color: '#FF3B30' },
   cardMerchant: { fontSize: 20, textAlign: 'center', marginBottom: 10 },
   cardDate: { fontSize: 14, color: '#aaa' },
+  cardLocation: { marginTop: 8, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: '#f0f4ff', borderRadius: 12 },
+  cardLocationText: { fontSize: 13, color: '#007AFF', fontWeight: '500' },
+  mapsLink: { fontSize: 12, textDecorationLine: 'underline' },
   
   formContainer: { padding: 20, backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20 },
   label: { fontSize: 16, fontWeight: '600', marginBottom: 10 },

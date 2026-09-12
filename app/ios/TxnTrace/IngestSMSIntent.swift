@@ -40,8 +40,21 @@ struct IngestSMSIntent: AppIntent {
     @Parameter(title: "Sender")
     var sender: String?
 
+    @Parameter(title: "Location")
+    var location: String?
+
+    @Parameter(title: "Latitude")
+    var latitude: Double?
+
+    @Parameter(title: "Longitude")
+    var longitude: Double?
+
     static var parameterSummary: some ParameterSummary {
-        Summary("Save \(\.$messageBody) from \(\.$sender) to TxnTrace")
+        Summary("Save \(\.$messageBody) from \(\.$sender) to TxnTrace") {
+            \.$location
+            \.$latitude
+            \.$longitude
+        }
     }
 
     @MainActor
@@ -52,13 +65,23 @@ struct IngestSMSIntent: AppIntent {
             return .result(value: false)
         }
 
-        let record: [String: Any] = [
+        var record: [String: Any] = [
             "id": UUID().uuidString,
             "sender": sender?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
             "body": trimmed,
             "receivedAt": ISO8601DateFormatter().string(from: Date()),
             "source": "shortcut",
         ]
+
+        if let loc = location?.trimmingCharacters(in: .whitespacesAndNewlines), !loc.isEmpty {
+            record["location"] = loc
+        }
+        if let lat = latitude {
+            record["latitude"] = lat
+        }
+        if let lng = longitude {
+            record["longitude"] = lng
+        }
 
         try SMSInboxWriter.append(record)
         SMSInboxWriter.stampLastRun()

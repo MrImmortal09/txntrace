@@ -338,8 +338,9 @@ const SettingsScreen = () => {
                 2. Tap + → Message{'\n'}
                 3. Leave Sender and Message empty to catch every bank{'\n'}
                 4. Turn on Run Immediately, turn off Notify When Run{'\n'}
-                5. New Blank Automation → add action “Save Transaction SMS”{'\n'}
-                6. Set its Message field to the Shortcut Input variable
+                5. Add action “Get Current Location” (optional, to capture txn place){'\n'}
+                6. Add action “Save Transaction SMS”{'\n'}
+                7. Set Message to Shortcut Input, and Location to Current Location
               </Text>
             </View>
 

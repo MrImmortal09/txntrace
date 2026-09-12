@@ -7,6 +7,7 @@ export const lightTheme = {
   accent: '#10B981', // Clean green
   border: '#E5E7EB',
   danger: '#EF4444',
+  warning: '#F59E0B',
   success: '#10B981',
   cardShadow: 'rgba(0, 0, 0, 0.05)',
   tabBarBg: '#FFFFFF',
@@ -23,6 +24,7 @@ export const darkTheme = {
   accent: '#34D399', // Soft green
   border: '#374151',
   danger: '#F87171',
+  warning: '#FBBF24',
   success: '#34D399',
   cardShadow: 'rgba(0, 0, 0, 0.3)',
   tabBarBg: '#1F2937',

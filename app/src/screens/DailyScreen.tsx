@@ -16,6 +16,7 @@ import {
   matchCreditToContact,
   markTransactionAsMine,
 } from '../services/settlements';
+import { openLocationInGoogleMaps } from '../utils/maps';
 
 type Transaction = TransactionRow;
 
@@ -134,9 +135,23 @@ const DailyScreen = () => {
                   <View style={styles.rowMiddle}>
                     <Text style={[styles.merchant, { color: colors.text }]} numberOfLines={1}>{item.merchant_raw || 'Unknown'}</Text>
                     <Text style={[styles.meta, { color: colors.textSecondary }]}>
-                      {new Date(item.date).toLocaleDateString([], { day: '2-digit', month: 'short' })}
+                      {new Date(item.date).toLocaleDateString([], { day: '2-digit', month: 'short' })} · {new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       {item.category ? ` · ${item.category}` : ''}
                     </Text>
+                    {item.location ? (
+                      <TouchableOpacity
+                        style={styles.locationChip}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          openLocationInGoogleMaps(item.location, item.latitude, item.longitude);
+                        }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Text style={[styles.locationChipText, { color: colors.primary }]} numberOfLines={1}>
+                          📍 {item.location} <Text style={styles.mapsLink}>↗</Text>
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                 </TouchableOpacity>
                 <View style={styles.rowRight}>
@@ -247,6 +262,9 @@ const styles = StyleSheet.create({
   rowMiddle: { flex: 1, justifyContent: 'center' },
   merchant: { fontSize: 16, fontWeight: '600' },
   meta: { fontSize: 13, marginTop: 4 },
+  locationChip: { marginTop: 4, alignSelf: 'flex-start' },
+  locationChipText: { fontSize: 12, fontWeight: '500' },
+  mapsLink: { fontSize: 11 },
   rowRight: { alignItems: 'flex-end', justifyContent: 'center', gap: 8 },
   amount: { fontSize: 15, fontWeight: 'bold' },
   actions: { flexDirection: 'row', gap: 6 },

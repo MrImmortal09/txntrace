@@ -1,4 +1,16 @@
-import { normalizeName, applySettlement, createSplit, settleDebtToFriend, autoMatchCreditTransaction, markTransactionAsMine } from '../src/services/settlements';
+import {
+  normalizeName,
+  applySettlement,
+  createSplit,
+  settleDebtToFriend,
+  autoMatchCreditTransaction,
+  markTransactionAsMine,
+  editSplitAmount,
+  deleteSplit,
+  editSettlementAmount,
+  deleteSettlement,
+  clearAllDebtsWithContact,
+} from '../src/services/settlements';
 import { db } from '../src/db/schema';
 
 // Mock react-native-contacts
@@ -97,8 +109,37 @@ jest.mock('../src/db/schema', () => {
           return { rowsAffected: 1 };
         }
 
+        if (q.startsWith('DELETE FROM SPLITS')) {
+          const splitId = params[0];
+          store.splits = store.splits.filter(s => s.id !== splitId);
+          return { rowsAffected: 1 };
+        }
+
+        if (q.startsWith('DELETE FROM SETTLEMENTS')) {
+          const settlementId = params[0];
+          store.settlements = store.settlements.filter(s => s.id !== settlementId);
+          return { rowsAffected: 1 };
+        }
+
         if (q.startsWith('UPDATE SPLITS')) {
-          if (q.includes('SET SETTLED = 1, AMOUNT_OWED = 0')) {
+          if (q.includes('WHERE CONTACT_ID = ?')) {
+            const contactId = params[0];
+            store.splits.forEach(s => {
+              if (s.contact_id === contactId) { s.settled = 1; s.amount_owed = 0; }
+            });
+          } else if (q.includes('ORIGINAL_AMOUNT = ?')) {
+            const [newOwed, newTotal, settled, splitId] = params;
+            const split = store.splits.find(s => s.id === splitId);
+            if (split) { split.amount_owed = newOwed; split.original_amount = newTotal; split.settled = settled; }
+          } else if (q.includes('ORIGINAL_AMOUNT = CASE')) {
+            const [newOwed, settled, , , splitId] = params;
+            const split = store.splits.find(s => s.id === splitId);
+            if (split) {
+              split.amount_owed = newOwed;
+              split.settled = settled;
+              if (!split.original_amount || split.original_amount < newOwed) split.original_amount = newOwed;
+            }
+          } else if (q.includes('SET SETTLED = 1, AMOUNT_OWED = 0')) {
             const splitId = params[0];
             const split = store.splits.find(s => s.id === splitId);
             if (split) { split.settled = 1; split.amount_owed = 0; }
@@ -111,7 +152,20 @@ jest.mock('../src/db/schema', () => {
         }
 
         if (q.startsWith('UPDATE SETTLEMENTS')) {
-          if (q.includes('SET UNAPPLIED_AMOUNT = ? WHERE ID = ?')) {
+          if (q.includes('WHERE CONTACT_ID = ?')) {
+            const contactId = params[0];
+            store.settlements.forEach(s => {
+              if (s.contact_id === contactId) { s.unapplied_amount = 0; }
+            });
+          } else if (q.includes('SET AMOUNT = ?, UNAPPLIED_AMOUNT = ? WHERE ID = ?')) {
+            const [amount, unapplied, id] = params;
+            const item = store.settlements.find(s => s.id === id);
+            if (item) { item.amount = amount; item.unapplied_amount = unapplied; }
+          } else if (q.includes('MIN(UNAPPLIED_AMOUNT')) {
+            const [amount, maxUnapplied, id] = params;
+            const item = store.settlements.find(s => s.id === id);
+            if (item) { item.amount = amount; item.unapplied_amount = Math.min(item.unapplied_amount || 0, maxUnapplied); }
+          } else if (q.includes('SET UNAPPLIED_AMOUNT = ? WHERE ID = ?')) {
             const [val, id] = params;
             const item = store.settlements.find(s => s.id === id);
             if (item) item.unapplied_amount = val;
@@ -371,5 +425,138 @@ describe('Settlement Balance & Overpayment Tracking', () => {
     await markTransactionAsMine('txn_mine');
     expect(mockDb.transactions[0].reviewed).toBe(1);
     expect(mockDb.transactions[0].needs_contact_match).toBe(0);
+  });
+
+  describe('Edit & Delete Debts & Clear All', () => {
+    test('editSplitAmount updates owed amount and marks settled when reduced to 0', async () => {
+      mockDb.splits.push({
+        id: 'split_edit_1',
+        transaction_id: 'txn_1',
+        contact_id: 'c1',
+        contact_name: 'Anurag',
+        amount_owed: 500,
+        original_amount: 500,
+        settled: 0,
+      });
+
+      // Edit amount to 250
+      await editSplitAmount('split_edit_1', 250, 500);
+      expect(mockDb.splits[0].amount_owed).toBe(250);
+      expect(mockDb.splits[0].original_amount).toBe(500);
+      expect(mockDb.splits[0].settled).toBe(0);
+
+      // Edit amount to 0 (marks settled)
+      await editSplitAmount('split_edit_1', 0);
+      expect(mockDb.splits[0].amount_owed).toBe(0);
+      expect(mockDb.splits[0].settled).toBe(1);
+    });
+
+    test('deleteSplit removes split from ledger', async () => {
+      mockDb.splits.push({
+        id: 'split_del_1',
+        transaction_id: 'txn_del_1',
+        contact_id: 'c1',
+        contact_name: 'Anurag',
+        amount_owed: 300,
+        original_amount: 300,
+        settled: 0,
+      });
+
+      await deleteSplit('split_del_1');
+      expect(mockDb.splits.find((s: any) => s.id === 'split_del_1')).toBeUndefined();
+    });
+
+    test('editSettlementAmount updates amount and unapplied amount', async () => {
+      mockDb.settlements.push({
+        id: 'settle_edit_1',
+        contact_id: 'c1',
+        contact_name: 'Anurag',
+        amount: 1000,
+        unapplied_amount: 500,
+        transaction_id: 'txn_1',
+        matched_split_id: null,
+        date: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      });
+
+      await editSettlementAmount('settle_edit_1', 800, 300);
+      expect(mockDb.settlements[0].amount).toBe(800);
+      expect(mockDb.settlements[0].unapplied_amount).toBe(300);
+    });
+
+    test('deleteSettlement removes settlement record', async () => {
+      mockDb.settlements.push({
+        id: 'settle_del_1',
+        contact_id: 'c1',
+        contact_name: 'Anurag',
+        amount: 500,
+        unapplied_amount: 0,
+        transaction_id: 'txn_1',
+        matched_split_id: null,
+        date: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      });
+
+      await deleteSettlement('settle_del_1');
+      expect(mockDb.settlements.find((s: any) => s.id === 'settle_del_1')).toBeUndefined();
+    });
+
+    test('clearAllDebtsWithContact settles all open splits and zeroes unapplied settlement balance', async () => {
+      mockDb.splits.push(
+        {
+          id: 'split_clear_1',
+          transaction_id: 't1',
+          contact_id: 'c1',
+          contact_name: 'Anurag',
+          amount_owed: 400,
+          original_amount: 400,
+          settled: 0,
+        },
+        {
+          id: 'split_clear_2',
+          transaction_id: 't2',
+          contact_id: 'c1',
+          contact_name: 'Anurag',
+          amount_owed: 250,
+          original_amount: 250,
+          settled: 0,
+        },
+        {
+          id: 'split_other',
+          transaction_id: 't3',
+          contact_id: 'c2',
+          contact_name: 'Other',
+          amount_owed: 100,
+          original_amount: 100,
+          settled: 0,
+        }
+      );
+
+      mockDb.settlements.push({
+        id: 'settle_clear_1',
+        contact_id: 'c1',
+        contact_name: 'Anurag',
+        amount: 300,
+        unapplied_amount: 150,
+        transaction_id: 't4',
+        matched_split_id: null,
+        date: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      });
+
+      await clearAllDebtsWithContact('c1');
+
+      // Contact c1's splits are settled with 0 amount owed
+      const c1Splits = mockDb.splits.filter((s: any) => s.contact_id === 'c1');
+      expect(c1Splits.every((s: any) => s.settled === 1 && s.amount_owed === 0)).toBe(true);
+
+      // Contact c1's unapplied amount is zeroed
+      expect(mockDb.settlements[0].unapplied_amount).toBe(0);
+
+      // Other contact's split remains untouched
+      const c2Split = mockDb.splits.find((s: any) => s.contact_id === 'c2');
+      expect(c2Split.settled).toBe(0);
+      expect(c2Split.amount_owed).toBe(100);
+    });
   });
 });

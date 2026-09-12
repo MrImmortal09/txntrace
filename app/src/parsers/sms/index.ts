@@ -17,6 +17,9 @@ export interface RawSMS {
   receivedAt: string;
   /** Which ingestion path delivered this: the Shortcuts automation, the message filter extension, or manual paste. */
   source?: 'shortcut' | 'filter' | 'manual';
+  location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 /**
@@ -118,6 +121,21 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
       const reference = extractReference(msg.body);
       const txnKey = reference ? `sms_ref_${reference}` : logKey;
 
+      let location: string | null = msg.location ? msg.location.trim() : null;
+      let latitude: number | null =
+        msg.latitude !== undefined && msg.latitude !== null && !isNaN(msg.latitude) ? Number(msg.latitude) : null;
+      let longitude: number | null =
+        msg.longitude !== undefined && msg.longitude !== null && !isNaN(msg.longitude) ? Number(msg.longitude) : null;
+
+      // If location is provided as "lat, lng" text, parse coordinates
+      if (location && (latitude === null || longitude === null)) {
+        const coordMatch = location.match(/^([-+]?\d{1,2}(?:\.\d+)?),\s*([-+]?\d{1,3}(?:\.\d+)?)$/);
+        if (coordMatch) {
+          latitude = parseFloat(coordMatch[1]);
+          longitude = parseFloat(coordMatch[2]);
+        }
+      }
+
       if (parsed) {
         const card = matchCard(cards, msg.sender, msg.body);
 
@@ -126,9 +144,24 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
         // and re-parsed later without needing the message to still exist on-device.
         const insertResult = await db.execute(
           `INSERT OR IGNORE INTO transactions
-            (id, bank, amount, type, merchant_raw, date, source, sender, sms_body, reference, card_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [txnKey, parsed.bank, parsed.amount, parsed.type, parsed.merchant, parsed.date, 'sms', msg.sender, msg.body, reference, card?.id ?? null]
+            (id, bank, amount, type, merchant_raw, date, source, sender, sms_body, reference, card_id, location, latitude, longitude)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            txnKey,
+            parsed.bank,
+            parsed.amount,
+            parsed.type,
+            parsed.merchant,
+            parsed.date,
+            'sms',
+            msg.sender,
+            msg.body,
+            reference,
+            card?.id ?? null,
+            location,
+            latitude,
+            longitude,
+          ]
         );
 
         // Only run friend-matching on a row that was actually just inserted —
@@ -152,8 +185,8 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
       // later, since it never produces a transaction row to inspect otherwise.
       await db.execute(
         `INSERT OR IGNORE INTO sms_log
-          (id, sender, body, received_at, source, status, bank, amount, type, merchant, reference, logged_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, sender, body, received_at, source, status, bank, amount, type, merchant, reference, logged_at, location)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           logKey,
           msg.sender,
@@ -167,6 +200,7 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
           parsed?.merchant ?? null,
           reference,
           new Date().toISOString(),
+          location,
         ]
       );
     } catch (error) {

@@ -359,3 +359,76 @@ export const looksLikePersonName = (name: string | null | undefined): boolean =>
   }
   return true;
 };
+
+/**
+ * Allows the user to edit a friend's split / debt amount.
+ * Setting newAmountOwed to 0 marks the split as settled.
+ */
+export const editSplitAmount = async (
+  splitId: string,
+  newAmountOwed: number,
+  newTotalAmount?: number
+): Promise<void> => {
+  const settled = newAmountOwed <= 0 ? 1 : 0;
+  const roundedOwed = Math.max(0, Number(newAmountOwed.toFixed(2)));
+  if (newTotalAmount !== undefined && newTotalAmount !== null) {
+    const roundedTotal = Math.max(roundedOwed, Number(newTotalAmount.toFixed(2)));
+    await db.execute(
+      'UPDATE splits SET amount_owed = ?, original_amount = ?, settled = ? WHERE id = ?',
+      [roundedOwed, roundedTotal, settled, splitId]
+    );
+  } else {
+    await db.execute(
+      `UPDATE splits SET amount_owed = ?, settled = ?,
+        original_amount = CASE WHEN original_amount IS NULL OR original_amount < ? THEN ? ELSE original_amount END
+       WHERE id = ?`,
+      [roundedOwed, settled, roundedOwed, roundedOwed, splitId]
+    );
+  }
+};
+
+/**
+ * Removes / deletes a split debt entirely from the ledger.
+ */
+export const deleteSplit = async (splitId: string): Promise<void> => {
+  await db.execute('DELETE FROM splits WHERE id = ?', [splitId]);
+};
+
+/**
+ * Allows the user to edit a settlement amount and/or unapplied excess amount.
+ */
+export const editSettlementAmount = async (
+  settlementId: string,
+  newAmount: number,
+  newUnappliedAmount?: number
+): Promise<void> => {
+  const roundedAmount = Math.max(0, Number(newAmount.toFixed(2)));
+  if (newUnappliedAmount !== undefined && newUnappliedAmount !== null) {
+    const roundedUnapplied = Math.max(0, Number(newUnappliedAmount.toFixed(2)));
+    await db.execute(
+      'UPDATE settlements SET amount = ?, unapplied_amount = ? WHERE id = ?',
+      [roundedAmount, roundedUnapplied, settlementId]
+    );
+  } else {
+    await db.execute(
+      'UPDATE settlements SET amount = ?, unapplied_amount = MIN(unapplied_amount, ?) WHERE id = ?',
+      [roundedAmount, roundedAmount, settlementId]
+    );
+  }
+};
+
+/**
+ * Removes / deletes a settlement record entirely from the ledger.
+ */
+export const deleteSettlement = async (settlementId: string): Promise<void> => {
+  await db.execute('DELETE FROM settlements WHERE id = ?', [settlementId]);
+};
+
+/**
+ * Clears all outstanding debts with a contact, marking all open splits as settled
+ * and zeroing out any unapplied settlement balances.
+ */
+export const clearAllDebtsWithContact = async (contactId: string): Promise<void> => {
+  await db.execute('UPDATE splits SET settled = 1, amount_owed = 0 WHERE contact_id = ?', [contactId]);
+  await db.execute('UPDATE settlements SET unapplied_amount = 0 WHERE contact_id = ?', [contactId]);
+};
