@@ -375,11 +375,12 @@ async def api_sync_splits_from_phone(payload: dict[str, Any], user_id: str = Dep
         for s in splits:
             conn.execute(
                 """INSERT INTO splits
-                   (id, transaction_id, contact_id, contact_name, amount_owed, settled, created_at,
+                   (id, transaction_id, contact_id, contact_name, amount_owed, original_amount, settled, created_at,
                     txn_date, txn_merchant, txn_amount, user_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                      amount_owed = EXCLUDED.amount_owed,
+                     original_amount = COALESCE(EXCLUDED.original_amount, splits.original_amount),
                      settled = EXCLUDED.settled""",
                 (
                     s.get("id"),
@@ -387,6 +388,7 @@ async def api_sync_splits_from_phone(payload: dict[str, Any], user_id: str = Dep
                     s.get("contact_id"),
                     s.get("contact_name"),
                     s.get("amount_owed"),
+                    s.get("original_amount"),
                     s.get("settled") or 0,
                     s.get("created_at") or datetime.now(timezone.utc).isoformat(),
                     s.get("txn_date"),
@@ -428,6 +430,19 @@ async def api_sync_settlements_from_phone(payload: dict[str, Any], user_id: str 
                 ),
             )
     return {"count": len(entries)}
+
+
+@app.get("/api/settlements/export")
+def api_export_settlements(since: str | None = Query(default=None), user_id: str = Depends(get_current_user)):
+    """Pull-sync endpoint for the mobile app: settlements recorded on the server."""
+    with get_db() as conn:
+        if since:
+            rows = conn.execute(
+                "SELECT * FROM settlements WHERE user_id = %s AND created_at > %s ORDER BY created_at ASC", (user_id, since)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM settlements WHERE user_id = %s ORDER BY created_at ASC", (user_id,)).fetchall()
+    return {"settlements": [dict(r) for r in rows]}
 
 
 @app.get("/friends", response_class=HTMLResponse)
@@ -607,7 +622,233 @@ async def api_clear_db(payload: dict[str, Any], user_id: str = Depends(get_curre
         raise HTTPException(status_code=400, detail='Send {"confirm": "CLEAR"} to proceed.')
     with get_db() as conn:
         conn.execute("DELETE FROM splits WHERE user_id = %s", (user_id,))
+        conn.execute("DELETE FROM settlements WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM contacts WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM cards WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
     return {"cleared": True}
+
+
+@app.get("/api/backup/status")
+def api_backup_status(user_id: str = Depends(get_current_user)):
+    """Checks if backup data exists on the server for the user, returning counts
+    so the mobile client can prompt the user if existing server data is found."""
+    with get_db() as conn:
+        txn_row = conn.execute("SELECT COUNT(*) as count FROM transactions WHERE user_id = %s", (user_id,)).fetchone()
+        split_row = conn.execute("SELECT COUNT(*) as count FROM splits WHERE user_id = %s", (user_id,)).fetchone()
+        settlement_row = conn.execute("SELECT COUNT(*) as count FROM settlements WHERE user_id = %s", (user_id,)).fetchone()
+        card_row = conn.execute("SELECT COUNT(*) as count FROM cards WHERE user_id = %s", (user_id,)).fetchone()
+        contact_row = conn.execute("SELECT COUNT(*) as count FROM contacts WHERE user_id = %s", (user_id,)).fetchone()
+
+        txn_count = txn_row["count"] if txn_row else 0
+        split_count = split_row["count"] if split_row else 0
+        settlement_count = settlement_row["count"] if settlement_row else 0
+        card_count = card_row["count"] if card_row else 0
+        contact_count = contact_row["count"] if contact_row else 0
+
+        latest_txn = conn.execute(
+            "SELECT MAX(COALESCE(updated_at, created_at)) as max_dt FROM transactions WHERE user_id = %s", (user_id,)
+        ).fetchone()
+        last_updated = latest_txn["max_dt"] if latest_txn else None
+
+    has_data = (txn_count > 0 or split_count > 0 or settlement_count > 0)
+    return {
+        "exists": has_data,
+        "transaction_count": txn_count,
+        "split_count": split_count,
+        "settlement_count": settlement_count,
+        "card_count": card_count,
+        "contact_count": contact_count,
+        "last_updated": last_updated,
+    }
+
+
+@app.post("/api/backup/upload")
+async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
+    """Uploads a complete backup from the mobile client. If overwrite=True,
+    clears the user's existing records on the server before writing the local
+    data. If overwrite=False, performs upserts."""
+    overwrite = bool(payload.get("overwrite", False))
+    transactions = payload.get("transactions") or []
+    splits = payload.get("splits") or []
+    settlements = payload.get("settlements") or []
+    cards = payload.get("cards") or []
+    contacts = payload.get("contacts") or []
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    with get_db() as conn:
+        if overwrite:
+            conn.execute("DELETE FROM splits WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM settlements WHERE user_id = %s", (user_id,))
+            conn.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
+            if cards:
+                conn.execute("DELETE FROM cards WHERE user_id = %s", (user_id,))
+            if contacts:
+                conn.execute("DELETE FROM contacts WHERE user_id = %s", (user_id,))
+
+        # 1. Insert/Upsert Transactions
+        for t in transactions:
+            t_created = t.get("created_at") or now
+            t_updated = t.get("updated_at") or t_created
+            conn.execute(
+                """INSERT INTO transactions
+                   (id, bank, amount, type, merchant_raw, date, source, category, note,
+                    reviewed, created_at, updated_at, reference, account_last4, balance,
+                    sender, sms_body, card_id, needs_contact_match, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     bank = EXCLUDED.bank,
+                     amount = EXCLUDED.amount,
+                     type = EXCLUDED.type,
+                     merchant_raw = EXCLUDED.merchant_raw,
+                     date = EXCLUDED.date,
+                     source = EXCLUDED.source,
+                     category = EXCLUDED.category,
+                     note = EXCLUDED.note,
+                     reviewed = EXCLUDED.reviewed,
+                     created_at = EXCLUDED.created_at,
+                     updated_at = EXCLUDED.updated_at,
+                     reference = EXCLUDED.reference,
+                     account_last4 = EXCLUDED.account_last4,
+                     balance = EXCLUDED.balance,
+                     sender = EXCLUDED.sender,
+                     sms_body = EXCLUDED.sms_body,
+                     card_id = EXCLUDED.card_id,
+                     needs_contact_match = EXCLUDED.needs_contact_match""",
+                (
+                    t["id"],
+                    t.get("bank"),
+                    t.get("amount"),
+                    t.get("type"),
+                    t.get("merchant_raw"),
+                    t.get("date"),
+                    t.get("source"),
+                    t.get("category"),
+                    t.get("note"),
+                    1 if t.get("reviewed") else 0,
+                    t_created,
+                    t_updated,
+                    t.get("reference"),
+                    t.get("account_last4"),
+                    t.get("balance"),
+                    t.get("sender"),
+                    t.get("sms_body"),
+                    t.get("card_id"),
+                    1 if t.get("needs_contact_match") else 0,
+                    user_id,
+                ),
+            )
+
+        # 2. Insert/Upsert Splits
+        for s in splits:
+            s_created = s.get("created_at") or now
+            conn.execute(
+                """INSERT INTO splits
+                   (id, transaction_id, contact_id, contact_name, amount_owed, original_amount,
+                    settled, created_at, txn_date, txn_merchant, txn_amount, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     transaction_id = EXCLUDED.transaction_id,
+                     contact_id = EXCLUDED.contact_id,
+                     contact_name = EXCLUDED.contact_name,
+                     amount_owed = EXCLUDED.amount_owed,
+                     original_amount = COALESCE(EXCLUDED.original_amount, splits.original_amount),
+                     settled = EXCLUDED.settled,
+                     txn_date = EXCLUDED.txn_date,
+                     txn_merchant = EXCLUDED.txn_merchant,
+                     txn_amount = EXCLUDED.txn_amount""",
+                (
+                    s["id"],
+                    s.get("transaction_id"),
+                    s.get("contact_id"),
+                    s.get("contact_name"),
+                    s.get("amount_owed"),
+                    s.get("original_amount"),
+                    1 if s.get("settled") else 0,
+                    s_created,
+                    s.get("txn_date"),
+                    s.get("txn_merchant"),
+                    s.get("txn_amount"),
+                    user_id,
+                ),
+            )
+
+        # 3. Insert/Upsert Settlements
+        for st in settlements:
+            st_created = st.get("created_at") or now
+            conn.execute(
+                """INSERT INTO settlements
+                   (id, contact_id, contact_name, amount, unapplied_amount, transaction_id,
+                    matched_split_id, date, created_at, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     contact_id = EXCLUDED.contact_id,
+                     contact_name = EXCLUDED.contact_name,
+                     amount = EXCLUDED.amount,
+                     unapplied_amount = EXCLUDED.unapplied_amount,
+                     transaction_id = EXCLUDED.transaction_id,
+                     matched_split_id = EXCLUDED.matched_split_id,
+                     date = EXCLUDED.date,
+                     created_at = EXCLUDED.created_at""",
+                (
+                    st["id"],
+                    st.get("contact_id"),
+                    st.get("contact_name"),
+                    st.get("amount"),
+                    st.get("unapplied_amount") or 0,
+                    st.get("transaction_id"),
+                    st.get("matched_split_id"),
+                    st.get("date"),
+                    st_created,
+                    user_id,
+                ),
+            )
+
+        # 4. Insert/Upsert Cards (if provided)
+        for c in cards:
+            c_created = c.get("created_at") or now
+            conn.execute(
+                """INSERT INTO cards
+                   (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     name = EXCLUDED.name,
+                     bank = EXCLUDED.bank,
+                     last4 = EXCLUDED.last4,
+                     credit_limit = EXCLUDED.credit_limit,
+                     is_credit_card = EXCLUDED.is_credit_card,
+                     custom_pattern = EXCLUDED.custom_pattern""",
+                (
+                    c["id"],
+                    c.get("name"),
+                    c.get("bank"),
+                    (c.get("last4") or "").strip() or None,
+                    c.get("credit_limit"),
+                    1 if c.get("is_credit_card", True) else 0,
+                    (c.get("custom_pattern") or "").strip() or None,
+                    c_created,
+                    user_id,
+                ),
+            )
+
+        # 5. Insert/Upsert Contacts (if provided)
+        for ct in contacts:
+            c_id = ct.get("id")
+            c_name = (ct.get("name") or "").strip()
+            if c_id and c_name:
+                conn.execute(
+                    """INSERT INTO contacts (id, name, created_at, user_id)
+                       VALUES (%s, %s, %s, %s)
+                       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name""",
+                    (c_id, c_name, now, user_id),
+                )
+
+    return {
+        "success": True,
+        "transactions_count": len(transactions),
+        "splits_count": len(splits),
+        "settlements_count": len(settlements),
+        "cards_count": len(cards),
+        "contacts_count": len(contacts),
+    }
