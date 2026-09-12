@@ -66,8 +66,14 @@ const FriendDetailScreen = () => {
         longitude: r.longitude,
       }));
 
+      const parseTime = (dStr?: string | null) => {
+        if (!dStr) return 0;
+        const clean = dStr.includes(' ') && !dStr.includes('T') ? dStr.replace(' ', 'T') : dStr;
+        return new Date(clean).getTime() || 0;
+      };
+
       const combined = [...splits, ...settlements].sort(
-        (a, b) => (new Date(b.date).getTime() || 0) - (new Date(a.date).getTime() || 0)
+        (a, b) => parseTime(b.date) - parseTime(a.date)
       );
       setEntries(combined);
 
@@ -103,8 +109,9 @@ const FriendDetailScreen = () => {
             try {
               await settleDebtToFriend(contactId, contactName, amountToSettle);
               loadHistory();
-            } catch (err) {
+            } catch (err: any) {
               console.error('Failed to settle debt:', err);
+              Alert.alert('Error', err?.message || 'Failed to settle debt.');
             }
           },
         },
@@ -125,8 +132,9 @@ const FriendDetailScreen = () => {
             try {
               await clearAllDebtsWithContact(contactId);
               loadHistory();
-            } catch (err) {
+            } catch (err: any) {
               console.error('Failed to clear debts:', err);
+              Alert.alert('Error', err?.message || 'Failed to clear debts.');
             }
           },
         },
@@ -140,22 +148,34 @@ const FriendDetailScreen = () => {
       const res = await db.execute('SELECT * FROM transactions WHERE id = ?', [transactionId]);
       const rows: any = res.rows;
       const arr = rows?._array || rows || [];
-      if (arr[0]) setSelected(arr[0]);
+      if (arr[0]) {
+        setSelected(arr[0]);
+      } else {
+        Alert.alert('Transaction Not Found', 'The original transaction record is no longer available.');
+      }
     } catch (error) {
       console.error('Failed to load original transaction:', error);
+      Alert.alert('Error', 'Failed to load original transaction.');
     }
   };
 
   const formatDateTime = (dateStr?: string | null) => {
     if (!dateStr) return '';
     try {
-      const d = new Date(dateStr);
+      const cleanDate = dateStr.includes(' ') && !dateStr.includes('T') ? dateStr.replace(' ', 'T') : dateStr;
+      const d = new Date(cleanDate);
       if (isNaN(d.getTime())) return dateStr;
       return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
     } catch {
       return dateStr;
     }
   };
+
+  const hasOpenDebts = entries.some(
+    e =>
+      (e.kind === 'split' && !e.settled && (e.amountOwed ?? 0) > 0) ||
+      (e.kind === 'settlement' && (e.unappliedAmount ?? 0) > 0)
+  );
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -168,7 +188,7 @@ const FriendDetailScreen = () => {
                 <Text style={styles.settleButtonText}>Settle Up</Text>
               </TouchableOpacity>
             )}
-            {balance !== 0 && (
+            {(balance !== 0 || hasOpenDebts) && (
               <TouchableOpacity
                 style={[styles.clearButton, { borderColor: colors.border }]}
                 onPress={handleClearAllDebts}
@@ -279,9 +299,7 @@ const FriendDetailScreen = () => {
           loadHistory();
         }}
         onViewTransaction={(txnId) => {
-          setTimeout(() => {
-            openOriginalMessage(txnId);
-          }, 150);
+          openOriginalMessage(txnId);
         }}
       />
 

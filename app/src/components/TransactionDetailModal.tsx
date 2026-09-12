@@ -65,7 +65,10 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
             {(() => {
               if (!transaction.date) return '';
               try {
-                const d = new Date(transaction.date);
+                const cleanDate = transaction.date.includes(' ') && !transaction.date.includes('T')
+                  ? transaction.date.replace(' ', 'T')
+                  : transaction.date;
+                const d = new Date(cleanDate);
                 if (isNaN(d.getTime())) return transaction.date;
                 return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
               } catch {

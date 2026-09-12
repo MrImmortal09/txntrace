@@ -91,8 +91,8 @@ export const EditDebtModal = ({
       }
     } else {
       const unappliedVal = parseFloat(totalInput);
-      if (!isNaN(unappliedVal) && unappliedVal > val1) {
-        Alert.alert('Invalid Amount', 'Excess amount owed cannot exceed the total payment amount.');
+      if (!isNaN(unappliedVal) && (unappliedVal < 0 || unappliedVal > val1)) {
+        Alert.alert('Invalid Amount', 'Excess amount owed must be between 0 and the total payment amount.');
         return;
       }
       setSaving(true);
@@ -140,7 +140,8 @@ export const EditDebtModal = ({
   const formattedDateTime = (() => {
     if (!entry.date) return '';
     try {
-      const d = new Date(entry.date);
+      const cleanDate = entry.date.includes(' ') && !entry.date.includes('T') ? entry.date.replace(' ', 'T') : entry.date;
+      const d = new Date(cleanDate);
       if (isNaN(d.getTime())) return entry.date;
       return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
     } catch {

@@ -449,6 +449,11 @@ describe('Settlement Balance & Overpayment Tracking', () => {
       await editSplitAmount('split_edit_1', 0);
       expect(mockDb.splits[0].amount_owed).toBe(0);
       expect(mockDb.splits[0].settled).toBe(1);
+
+      // Edit amount back to positive (un-settles split)
+      await editSplitAmount('split_edit_1', 200);
+      expect(mockDb.splits[0].amount_owed).toBe(200);
+      expect(mockDb.splits[0].settled).toBe(0);
     });
 
     test('deleteSplit removes split from ledger', async () => {

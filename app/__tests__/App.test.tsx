@@ -50,8 +50,9 @@ jest.mock('../src/screens/TabNavigator', () => ({
 }));
 
 test('renders correctly', async () => {
-  await ReactTestRenderer.act(() => {
+  await ReactTestRenderer.act(async () => {
     ReactTestRenderer.create(<App />);
+    await Promise.resolve();
   });
 });
 
