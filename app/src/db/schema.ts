@@ -80,10 +80,23 @@ export const setupDatabase = async () => {
       contact_id TEXT,
       contact_name TEXT,
       amount_owed REAL,
+      original_amount REAL,
       settled INTEGER DEFAULT 0, -- boolean
       FOREIGN KEY(transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
     );
   `);
+
+  try {
+    await db.execute(`ALTER TABLE splits ADD COLUMN original_amount REAL;`);
+  } catch (error) {
+    // Already migrated.
+  }
+
+  try {
+    await db.execute(`UPDATE splits SET original_amount = amount_owed WHERE original_amount IS NULL AND settled = 0;`);
+  } catch (error) {
+    // Already backfilled.
+  }
 
   // Remembers which contact a payer name from an incoming SMS refers to, so the
   // user is only asked to identify e.g. "Mr ANURAG YADAV" once — every later
@@ -104,18 +117,27 @@ export const setupDatabase = async () => {
   // ("you paid for X on the 3rd" / "they paid you back on the 9th"), and so a
   // payment that doesn't match any open split is still visible rather than
   // silently dropped.
+  // unapplied_amount stores any excess payment beyond open debts (e.g. friend
+  // owed ₹410, sent ₹1000 -> unapplied_amount is ₹590, meaning you owe friend ₹590).
   await db.execute(`
     CREATE TABLE IF NOT EXISTS settlements (
       id TEXT PRIMARY KEY,
       contact_id TEXT,
       contact_name TEXT,
       amount REAL,
+      unapplied_amount REAL DEFAULT 0,
       transaction_id TEXT,
       matched_split_id TEXT,
       date TEXT,
       created_at TEXT
     );
   `);
+
+  try {
+    await db.execute(`ALTER TABLE settlements ADD COLUMN unapplied_amount REAL DEFAULT 0;`);
+  } catch (error) {
+    // Already migrated.
+  }
 
   // Small key-value store for on-device settings (e.g. the server URL for
   // web sync) — avoids pulling in AsyncStorage for what's currently one string.

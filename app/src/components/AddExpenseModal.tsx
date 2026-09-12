@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
 import { db } from '../db/schema';
+import { createSplit, settleDebtToFriend } from '../services/settlements';
 
 interface Props {
   visible: boolean;
@@ -11,22 +12,18 @@ interface Props {
 }
 
 /**
- * Records a manual expense for a contact with no underlying SMS/statement
- * transaction — e.g. cash lent, or a friend with no prior history at all
- * (FriendsScreen's own list only shows contacts who already have a split,
- * settlement, or alias, so this is also the only way to start a ledger with
- * someone brand new). Still creates a transactions row (source: 'manual',
- * already anticipated in the schema's own comment) rather than making
- * splits.transaction_id optional, so it stays indistinguishable from a real
- * transaction everywhere else that joins the two — the ledger, the owed
- * total, tapping through to see details.
+ * Records a manual expense or debt payback for a contact with no underlying
+ * SMS/statement transaction. Creates a transactions row (source: 'manual')
+ * and either creates a split (offsetting any credit balance) or settles debt.
  */
 const AddExpenseModal = ({ visible, contactId, contactName, onClose, onSaved }: Props) => {
+  const [mode, setMode] = useState<'expense' | 'repay'>('expense');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
   const reset = () => {
+    setMode('expense');
     setAmount('');
     setDescription('');
     onClose();
@@ -44,15 +41,19 @@ const AddExpenseModal = ({ visible, contactId, contactName, onClose, onSaved }: 
     try {
       const now = new Date().toISOString();
       const txnId = `manual_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const defaultDesc = mode === 'expense' ? 'Manual expense' : `Paid back ${contactName}`;
       await db.execute(
         `INSERT INTO transactions (id, bank, amount, type, merchant_raw, date, source, reviewed, created_at, updated_at)
          VALUES (?, NULL, ?, 'debit', ?, ?, 'manual', 1, ?, ?)`,
-        [txnId, value, description.trim() || 'Manual expense', now, now, now]
+        [txnId, value, description.trim() || defaultDesc, now, now, now]
       );
-      await db.execute(
-        'INSERT INTO splits (id, transaction_id, contact_id, contact_name, amount_owed) VALUES (?, ?, ?, ?, ?)',
-        [`split_${Date.now()}_${Math.random().toString(36).slice(2)}`, txnId, contactId, contactName, value]
-      );
+
+      if (mode === 'repay') {
+        await settleDebtToFriend(contactId, contactName, value, txnId);
+      } else {
+        await createSplit(txnId, contactId, contactName, value);
+      }
+
       setAmount('');
       setDescription('');
       onSaved();
@@ -68,7 +69,25 @@ const AddExpenseModal = ({ visible, contactId, contactName, onClose, onSaved }: 
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={reset} />
         <View style={styles.card}>
-          <Text style={styles.title}>Add expense{contactName ? ` for ${contactName}` : ''}</Text>
+          <Text style={styles.title}>
+            {mode === 'expense' ? 'Add expense' : 'Record payment'}
+            {contactName ? ` for ${contactName}` : ''}
+          </Text>
+
+          <View style={styles.tabRow}>
+            <TouchableOpacity
+              style={[styles.tab, mode === 'expense' && styles.tabActive]}
+              onPress={() => setMode('expense')}
+            >
+              <Text style={[styles.tabText, mode === 'expense' && styles.tabTextActive]}>I paid for them</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, mode === 'repay' && styles.tabActive]}
+              onPress={() => setMode('repay')}
+            >
+              <Text style={[styles.tabText, mode === 'repay' && styles.tabTextActive]}>I paid them back</Text>
+            </TouchableOpacity>
+          </View>
 
           <Text style={styles.label}>Amount</Text>
           <TextInput
@@ -83,7 +102,7 @@ const AddExpenseModal = ({ visible, contactId, contactName, onClose, onSaved }: 
           <Text style={styles.label}>What for (optional)</Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g. Movie tickets"
+            placeholder={mode === 'expense' ? 'e.g. Movie tickets' : 'e.g. Settle up'}
             value={description}
             onChangeText={setDescription}
           />
@@ -93,7 +112,7 @@ const AddExpenseModal = ({ visible, contactId, contactName, onClose, onSaved }: 
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.saveButton} onPress={save} disabled={saving}>
-              <Text style={styles.saveText}>{saving ? 'Saving…' : 'Add'}</Text>
+              <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -117,7 +136,12 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 8,
   },
-  title: { fontSize: 17, fontWeight: 'bold', color: '#333', marginBottom: 16 },
+  title: { fontSize: 17, fontWeight: 'bold', color: '#333', marginBottom: 12 },
+  tabRow: { flexDirection: 'row', backgroundColor: '#f0f0f0', borderRadius: 8, padding: 3, marginBottom: 16 },
+  tab: { flex: 1, paddingVertical: 7, alignItems: 'center', borderRadius: 6 },
+  tabActive: { backgroundColor: '#fff', elevation: 1, shadowOpacity: 0.1, shadowOffset: { width: 0, height: 1 } },
+  tabText: { fontSize: 13, fontWeight: '600', color: '#666' },
+  tabTextActive: { color: '#007AFF' },
   label: { fontSize: 13, fontWeight: '600', color: '#999', marginBottom: 6 },
   input: { backgroundColor: '#f2f2f2', borderRadius: 10, padding: 12, fontSize: 15, marginBottom: 16 },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 4 },

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, A
 import Contacts from 'react-native-contacts';
 import { db } from '../db/schema';
 import { useTheme } from '../theme/ThemeProvider';
+import { createSplit } from '../services/settlements';
 
 interface SplitContact {
   id: string;
@@ -117,10 +118,7 @@ const SplitModal = ({ visible, transactionId, amount, onClose, onSaved }: Props)
   const handleDone = async () => {
     try {
       for (const split of selected) {
-        await db.execute(
-          'INSERT INTO splits (id, transaction_id, contact_id, contact_name, amount_owed) VALUES (?, ?, ?, ?, ?)',
-          [`split_${Date.now()}_${Math.random().toString(36).slice(2)}`, transactionId, split.id, split.name, split.amountOwed]
-        );
+        await createSplit(transactionId, split.id, split.name, split.amountOwed);
       }
       await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
         new Date().toISOString(),

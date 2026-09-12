@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS settlements (
     contact_id TEXT,
     contact_name TEXT,
     amount REAL,
+    unapplied_amount REAL DEFAULT 0,
     transaction_id TEXT,
     matched_split_id TEXT,
     date TEXT,
@@ -176,3 +177,4 @@ def init_db() -> None:
         conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS user_id TEXT")
         conn.execute("ALTER TABLE splits ADD COLUMN IF NOT EXISTS user_id TEXT")
         conn.execute("ALTER TABLE settlements ADD COLUMN IF NOT EXISTS user_id TEXT")
+        conn.execute("ALTER TABLE settlements ADD COLUMN IF NOT EXISTS unapplied_amount REAL DEFAULT 0")

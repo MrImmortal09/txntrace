@@ -12,6 +12,8 @@
     <span class="font-semibold text-gray-900">{{ f.contact_name or 'Unknown' }}</span>
     {% if f.owed > 0 %}
     <span class="text-sm font-bold text-orange-500">owes ₹{{ '%.2f' | format(f.owed) }}</span>
+    {% elif f.owed < 0 %}
+    <span class="text-sm font-bold text-red-500">you owe ₹{{ '%.2f' | format(-f.owed) }}</span>
     {% else %}
     <span class="text-sm font-semibold text-credit">settled up</span>
     {% endif %}

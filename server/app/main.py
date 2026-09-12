@@ -410,14 +410,16 @@ async def api_sync_settlements_from_phone(payload: dict[str, Any], user_id: str 
         for s in entries:
             conn.execute(
                 """INSERT INTO settlements
-                   (id, contact_id, contact_name, amount, transaction_id, matched_split_id, date, created_at, user_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                   ON CONFLICT (id) DO NOTHING""",
+                   (id, contact_id, contact_name, amount, unapplied_amount, transaction_id, matched_split_id, date, created_at, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     unapplied_amount = excluded.unapplied_amount""",
                 (
                     s.get("id"),
                     s.get("contact_id"),
                     s.get("contact_name"),
                     s.get("amount"),
+                    s.get("unapplied_amount") or 0,
                     s.get("transaction_id"),
                     s.get("matched_split_id"),
                     s.get("date"),
@@ -433,18 +435,24 @@ def friends_page(request: Request):
     user_id = get_web_user(request)
     if not user_id: return RedirectResponse("/login")
     with get_db() as conn:
-        # Mirrors the mobile app's own FriendsScreen query: a friend's
-        # identity comes from contact_name denormalized on splits/
-        # settlements, not a join to `contacts` — a phone-authored split
-        # references a real contact, but the corresponding row in the
-        # phone-only-authored `contacts` mirror may not (yet) reflect it.
+        # Mirrors the mobile app's own FriendsScreen query: combines contacts
+        # from both splits and settlements so advance credits or credit-only
+        # contacts are never omitted.
         rows = conn.execute(
-            """SELECT contact_id, MAX(contact_name) as contact_name,
-                 COALESCE(SUM(amount_owed) FILTER (WHERE settled = 0), 0) as owed
-               FROM splits
-               WHERE user_id = %s
-               GROUP BY contact_id
-               ORDER BY owed DESC, contact_name ASC""", (user_id,)
+            """SELECT c.contact_id, MAX(c.contact_name) as contact_name,
+                 COALESCE((SELECT SUM(amount_owed) FROM splits s WHERE s.contact_id = c.contact_id AND s.user_id = %s AND s.settled = 0), 0) -
+                 COALESCE((SELECT SUM(unapplied_amount) FROM settlements st WHERE st.contact_id = c.contact_id AND st.user_id = %s), 0) as owed
+               FROM (
+                 SELECT contact_id, contact_name FROM splits WHERE user_id = %s
+                 UNION
+                 SELECT contact_id, contact_name FROM settlements WHERE user_id = %s
+               ) c
+               GROUP BY c.contact_id
+               ORDER BY ABS(
+                 COALESCE((SELECT SUM(amount_owed) FROM splits s WHERE s.contact_id = c.contact_id AND s.user_id = %s AND s.settled = 0), 0) -
+                 COALESCE((SELECT SUM(unapplied_amount) FROM settlements st WHERE st.contact_id = c.contact_id AND st.user_id = %s), 0)
+               ) DESC, contact_name ASC""",
+            (user_id, user_id, user_id, user_id, user_id, user_id),
         ).fetchall()
     return templates.TemplateResponse(request, "friends.html", {"friends": [dict(r) for r in rows]})
 
@@ -462,7 +470,9 @@ def friend_detail_page(request: Request, contact_id: str):
     contact_name = next(
         (s["contact_name"] for s in list(splits) + list(settlements) if s["contact_name"]), "Friend"
     )
-    owed = sum(s["amount_owed"] or 0 for s in splits if not s["settled"])
+    open_splits = sum(s["amount_owed"] or 0 for s in splits if not s["settled"])
+    unapplied = sum(s.get("unapplied_amount") or 0 for s in settlements)
+    owed = open_splits - unapplied
 
     # Combined into one date-sorted ledger here rather than in the template,
     # matching the mobile app's own FriendDetailScreen — a split shows

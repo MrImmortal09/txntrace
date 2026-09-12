@@ -64,20 +64,18 @@ export const matchNameToContact = async (
  * tracking a running balance rather than requiring one payment to cover a
  * split in full. A payment smaller than what's owed now reduces amount_owed
  * instead of being left unmatched; leftover beyond what the oldest split
- * needs rolls forward into the next-oldest one, so several partial payments
- * (₹10, then ₹90 against a ₹100 debt) still add up to fully settling it.
- * This can only run after the user has explicitly matched a payment to a
- * contact in the first place, so applying it — even partially — to their
- * known debt is exactly what that match means, not a guess. A contact with
- * no open splits at all still gets the settlement recorded, just with no
- * matched split, so the money isn't silently dropped from their history.
+ * needs rolls forward into the next-oldest one.
+ *
+ * Any excess remaining after covering all open splits (e.g. friend owed ₹410,
+ * sent ₹1000 -> excess ₹590) is stored as unapplied_amount in settlements,
+ * indicating that the user now owes the friend this amount.
  */
 export const applySettlement = async (
   contactId: string,
   contactName: string,
   amount: number,
   transactionId: string
-): Promise<{ matchedSplitId: string | null }> => {
+): Promise<{ matchedSplitId: string | null; unappliedAmount: number }> => {
   const openSplits = await db.execute(
     `SELECT s.id, s.amount_owed FROM splits s
      JOIN transactions t ON t.id = s.transaction_id
@@ -105,14 +103,17 @@ export const applySettlement = async (
     }
   }
 
+  const unapplied = Math.max(0, Number(remaining.toFixed(2)));
+
   await db.execute(
-    `INSERT INTO settlements (id, contact_id, contact_name, amount, transaction_id, matched_split_id, date, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO settlements (id, contact_id, contact_name, amount, unapplied_amount, transaction_id, matched_split_id, date, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `settle_${transactionId}`,
       contactId,
       contactName,
       amount,
+      unapplied,
       transactionId,
       firstMatchedId,
       new Date().toISOString(),
@@ -125,12 +126,225 @@ export const applySettlement = async (
   // a friend's balance. Every caller (a fresh match, auto-matching on
   // ingestion, and the re-parse tool) goes through here, so fixing it once
   // in this shared spot covers all three instead of needing it at each.
-  await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
+  await db.execute('UPDATE transactions SET reviewed = 1, needs_contact_match = 0, updated_at = ? WHERE id = ?', [
     new Date().toISOString(),
     transactionId,
   ]);
 
-  return { matchedSplitId: firstMatchedId };
+  return { matchedSplitId: firstMatchedId, unappliedAmount: unapplied };
+};
+
+/**
+ * Creates a new split for a contact, automatically offsetting against any
+ * existing unapplied credit balance (money you owe to the friend).
+ * If the user owes the friend ₹590 and adds a new split for ₹200, the ₹200 is
+ * immediately satisfied and the user's debt to the friend drops to ₹390.
+ */
+export const createSplit = async (
+  transactionId: string,
+  contactId: string,
+  contactName: string,
+  amount: number
+): Promise<{ id: string; amountOwed: number; settled: boolean }> => {
+  const splitId = `split_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+  const creditRes = await db.execute(
+    `SELECT id, unapplied_amount FROM settlements
+     WHERE contact_id = ? AND unapplied_amount > 0
+     ORDER BY date ASC`,
+    [contactId]
+  );
+  const rows: any = creditRes.rows;
+  const credits = rows?._array || rows || [];
+
+  let remainingDebt = amount;
+  for (const c of credits) {
+    if (remainingDebt <= 0) break;
+    const currentUnapplied = Number(c.unapplied_amount || 0);
+    if (currentUnapplied <= 0) continue;
+
+    if (currentUnapplied >= remainingDebt) {
+      const nextUnapplied = Number((currentUnapplied - remainingDebt).toFixed(2));
+      await db.execute('UPDATE settlements SET unapplied_amount = ? WHERE id = ?', [nextUnapplied, c.id]);
+      remainingDebt = 0;
+    } else {
+      remainingDebt = Number((remainingDebt - currentUnapplied).toFixed(2));
+      await db.execute('UPDATE settlements SET unapplied_amount = 0 WHERE id = ?', [c.id]);
+    }
+  }
+
+  const settled = remainingDebt <= 0;
+  const amountOwed = Math.max(0, Number(remainingDebt.toFixed(2)));
+
+  await db.execute(
+    `INSERT INTO splits (id, transaction_id, contact_id, contact_name, amount_owed, original_amount, settled)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [splitId, transactionId, contactId, contactName, amountOwed, amount, settled ? 1 : 0]
+  );
+
+  return { id: splitId, amountOwed, settled };
+};
+
+/**
+ * Records that the user paid a friend back (clearing money owed to friend).
+ * Reduces unapplied_amount on the friend's settlements oldest first.
+ */
+export const settleDebtToFriend = async (
+  contactId: string,
+  contactName: string,
+  amount: number,
+  transactionId?: string
+): Promise<void> => {
+  let txnId = transactionId;
+  const now = new Date().toISOString();
+  if (!txnId) {
+    txnId = `manual_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    await db.execute(
+      `INSERT INTO transactions (id, bank, amount, type, merchant_raw, date, source, reviewed, created_at, updated_at)
+       VALUES (?, NULL, ?, 'debit', ?, ?, 'manual', 1, ?, ?)`,
+      [txnId, amount, `Paid back ${contactName}`, now, now, now]
+    );
+  }
+
+  await createSplit(txnId, contactId, contactName, amount);
+
+  await db.execute('UPDATE transactions SET reviewed = 1, updated_at = ? WHERE id = ?', [
+    now,
+    txnId,
+  ]);
+};
+
+/**
+ * Marks a credit or debit transaction as user's own, clearing review queue
+ * and any pending contact match status.
+ */
+export const markTransactionAsMine = async (transactionId: string): Promise<void> => {
+  await db.execute(
+    'UPDATE transactions SET reviewed = 1, needs_contact_match = 0, updated_at = ? WHERE id = ?',
+    [new Date().toISOString(), transactionId]
+  );
+};
+
+export interface AutoMatchResult {
+  matched: boolean;
+  contactId?: string;
+  contactName?: string;
+  unappliedAmount?: number;
+}
+
+/**
+ * Attempts to automatically match an incoming credit transaction to a contact:
+ * 1. Checks contact aliases for the raw payer/merchant name.
+ * 2. Checks known contacts in splits/settlements matching the payer name.
+ * 3. Checks device phone contacts matching the payer name.
+ * If matched, applies settlement and saves alias for future auto-matches.
+ */
+export const autoMatchCreditTransaction = async (
+  txn: { id: string; merchant_raw: string | null; amount: number }
+): Promise<AutoMatchResult> => {
+  const rawName = txn.merchant_raw ? txn.merchant_raw.trim() : '';
+
+  // 1. Check existing alias
+  if (rawName) {
+    const alias = await findAliasForName(rawName);
+    if (alias) {
+      const { unappliedAmount } = await applySettlement(alias.contact_id, alias.contact_name, txn.amount, txn.id);
+      return {
+        matched: true,
+        contactId: alias.contact_id,
+        contactName: alias.contact_name,
+        unappliedAmount,
+      };
+    }
+  }
+
+  // 2. Check if normalized rawName matches any known contact in splits, settlements, or aliases
+  if (rawName) {
+    const normalized = normalizeName(rawName);
+    const candidateRes = await db.execute(
+      `SELECT contact_id, contact_name FROM (
+         SELECT contact_id, contact_name FROM contact_aliases WHERE normalized_name = ?
+         UNION
+         SELECT contact_id, contact_name FROM splits WHERE UPPER(contact_name) = ?
+         UNION
+         SELECT contact_id, contact_name FROM settlements WHERE UPPER(contact_name) = ?
+       ) WHERE contact_id IS NOT NULL LIMIT 1`,
+      [normalized, normalized, normalized]
+    );
+    const rows: any = candidateRes.rows;
+    const candidates = rows?._array || rows || [];
+    if (candidates.length > 0 && candidates[0].contact_id) {
+      const match = candidates[0];
+      await db.execute(
+        `INSERT OR REPLACE INTO contact_aliases (id, normalized_name, raw_name, contact_id, contact_name, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [normalized, normalized, rawName, match.contact_id, match.contact_name, new Date().toISOString()]
+      );
+      const { unappliedAmount } = await applySettlement(match.contact_id, match.contact_name, txn.amount, txn.id);
+      return {
+        matched: true,
+        contactId: match.contact_id,
+        contactName: match.contact_name,
+        unappliedAmount,
+      };
+    }
+  }
+
+  // 3. Check device contacts
+  try {
+    const Contacts = require('react-native-contacts');
+    const ContactsModule = Contacts.default || Contacts;
+    const perm = await ContactsModule.checkPermission();
+    if (perm === 'authorized' && rawName) {
+      const allContacts = await ContactsModule.getAll();
+      const normRaw = normalizeName(rawName);
+      const matched = allContacts.find((c: any) => {
+        const name = c.displayName || `${c.givenName || ''} ${c.familyName || ''}`.trim();
+        return normalizeName(name) === normRaw;
+      });
+      if (matched) {
+        const contactName = matched.displayName || `${matched.givenName || ''} ${matched.familyName || ''}`.trim();
+        await db.execute(
+          `INSERT OR REPLACE INTO contact_aliases (id, normalized_name, raw_name, contact_id, contact_name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [normRaw, normRaw, rawName, matched.recordID, contactName, new Date().toISOString()]
+        );
+        const { unappliedAmount } = await applySettlement(matched.recordID, contactName, txn.amount, txn.id);
+        return {
+          matched: true,
+          contactId: matched.recordID,
+          contactName,
+          unappliedAmount,
+        };
+      }
+    }
+  } catch (err) {
+    // Ignore contacts read error if module unavailable or permission not granted
+  }
+
+  return { matched: false };
+};
+
+/**
+ * Manually matches a credit transaction to a chosen contact, saving the alias
+ * so future transactions from this payer auto-match automatically.
+ */
+export const matchCreditToContact = async (
+  txnId: string,
+  rawMerchant: string | null,
+  contactId: string,
+  contactName: string,
+  amount: number
+): Promise<{ unappliedAmount: number }> => {
+  if (rawMerchant) {
+    await db.execute(
+      `INSERT OR REPLACE INTO contact_aliases (id, normalized_name, raw_name, contact_id, contact_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [normalizeName(rawMerchant), normalizeName(rawMerchant), rawMerchant, contactId, contactName, new Date().toISOString()]
+    );
+  }
+  const result = await applySettlement(contactId, contactName, amount, txnId);
+  return { unappliedAmount: result.unappliedAmount };
 };
 
 /**

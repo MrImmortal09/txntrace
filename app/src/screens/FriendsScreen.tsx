@@ -1,9 +1,13 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../db/schema';
-import { matchNameToContact } from '../services/settlements';
+import {
+  autoMatchCreditTransaction,
+  matchCreditToContact,
+  markTransactionAsMine,
+} from '../services/settlements';
 import ContactPickerModal, { PickedContact } from '../components/ContactPickerModal';
 import AddExpenseModal from '../components/AddExpenseModal';
 
@@ -17,7 +21,9 @@ interface PendingMatch {
 interface FriendBalance {
   contact_id: string;
   contact_name: string;
-  owed: number;
+  net_balance: number;
+  owed_by_friend: number;
+  owed_to_friend: number;
 }
 
 const FriendsScreen = () => {
@@ -40,8 +46,10 @@ const FriendsScreen = () => {
 
       const friendsRes = await db.execute(`
         SELECT contact_id, MAX(contact_name) as contact_name,
-          (SELECT COALESCE(SUM(amount_owed), 0) FROM splits s2
-             WHERE s2.contact_id = c.contact_id AND s2.settled = 0) as owed
+          COALESCE((SELECT SUM(amount_owed) FROM splits s2 WHERE s2.contact_id = c.contact_id AND s2.settled = 0), 0) as owed_by_friend,
+          COALESCE((SELECT SUM(unapplied_amount) FROM settlements st WHERE st.contact_id = c.contact_id), 0) as owed_to_friend,
+          (COALESCE((SELECT SUM(amount_owed) FROM splits s2 WHERE s2.contact_id = c.contact_id AND s2.settled = 0), 0) -
+           COALESCE((SELECT SUM(unapplied_amount) FROM settlements st WHERE st.contact_id = c.contact_id), 0)) as net_balance
         FROM (
           SELECT contact_id, contact_name FROM splits
           UNION
@@ -50,7 +58,7 @@ const FriendsScreen = () => {
           SELECT contact_id, contact_name FROM contact_aliases
         ) c
         GROUP BY contact_id
-        ORDER BY owed DESC, contact_name ASC
+        ORDER BY ABS(net_balance) DESC, net_balance DESC, contact_name ASC
       `);
       const friendRows: any = friendsRes.rows;
       setFriends(friendRows?._array || friendRows || []);
@@ -65,12 +73,41 @@ const FriendsScreen = () => {
     }, [loadData])
   );
 
+  const handleMarkAsMine = async (item: PendingMatch) => {
+    try {
+      await markTransactionAsMine(item.id);
+      loadData();
+    } catch (error) {
+      console.error('Failed to mark as mine:', error);
+    }
+  };
+
+  const handleMatch = async (item: PendingMatch) => {
+    try {
+      const autoResult = await autoMatchCreditTransaction(item);
+      if (autoResult.matched) {
+        Alert.alert('Auto-Matched', `Matched to ${autoResult.contactName}`);
+        loadData();
+        return;
+      }
+    } catch (error) {
+      console.error('Auto match failed, opening picker:', error);
+    }
+    setMatchingTxn(item);
+  };
+
   const handlePick = async (contact: PickedContact) => {
     if (!matchingTxn) return;
     try {
-      await matchNameToContact(matchingTxn.merchant_raw, contact.id, contact.name);
+      await matchCreditToContact(
+        matchingTxn.id,
+        matchingTxn.merchant_raw,
+        contact.id,
+        contact.name,
+        matchingTxn.amount
+      );
     } catch (error) {
-      console.error('Failed to match name to contact:', error);
+      console.error('Failed to match credit to contact:', error);
     }
     setMatchingTxn(null);
     loadData();
@@ -99,14 +136,21 @@ const FriendsScreen = () => {
         <View style={styles.pendingSection}>
           <Text style={styles.sectionHeader}>Needs matching</Text>
           {pending.map(item => (
-            <TouchableOpacity key={item.id} style={styles.pendingRow} onPress={() => setMatchingTxn(item)}>
+            <View key={item.id} style={styles.pendingRow}>
               <View style={styles.pendingInfo}>
-                <Text style={styles.pendingName}>{item.merchant_raw}</Text>
+                <Text style={styles.pendingName}>{item.merchant_raw || 'Unknown Payer'}</Text>
                 <Text style={styles.pendingMeta}>{new Date(item.date).toLocaleDateString()}</Text>
               </View>
               <Text style={styles.pendingAmount}>+₹{item.amount.toFixed(2)}</Text>
-              <Text style={styles.matchButton}>Match</Text>
-            </TouchableOpacity>
+              <View style={styles.pendingActions}>
+                <TouchableOpacity style={styles.mineButton} onPress={() => handleMarkAsMine(item)}>
+                  <Text style={styles.mineButtonText}>Mine</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.matchButtonTouch} onPress={() => handleMatch(item)}>
+                  <Text style={styles.matchButton}>Match</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           ))}
         </View>
       )}
@@ -123,11 +167,18 @@ const FriendsScreen = () => {
           renderItem={({ item }) => (
             <TouchableOpacity
               style={styles.friendRow}
-              onPress={() => navigation.navigate('FriendDetail', { contactId: item.contact_id, contactName: item.contact_name })}
+              onPress={() =>
+                navigation.navigate('FriendDetail', {
+                  contactId: item.contact_id,
+                  contactName: item.contact_name,
+                })
+              }
             >
               <Text style={styles.friendName}>{item.contact_name}</Text>
-              {item.owed > 0 ? (
-                <Text style={styles.owedAmount}>owes ₹{item.owed.toFixed(2)}</Text>
+              {item.net_balance > 0 ? (
+                <Text style={styles.owedAmount}>owes ₹{item.net_balance.toFixed(2)}</Text>
+              ) : item.net_balance < 0 ? (
+                <Text style={styles.youOweAmount}>you owe ₹{Math.abs(item.net_balance).toFixed(2)}</Text>
               ) : (
                 <Text style={styles.settledText}>settled up</Text>
               )}
@@ -190,7 +241,23 @@ const styles = StyleSheet.create({
   pendingName: { fontSize: 15, fontWeight: '600', color: '#333' },
   pendingMeta: { fontSize: 12, color: '#999', marginTop: 2 },
   pendingAmount: { fontSize: 15, fontWeight: 'bold', color: '#34C759', marginRight: 10 },
-  matchButton: { fontSize: 14, fontWeight: '700', color: '#007AFF' },
+  pendingActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  mineButton: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    backgroundColor: '#fff',
+  },
+  mineButtonText: { fontSize: 13, fontWeight: '600', color: '#666' },
+  matchButtonTouch: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: '#007AFF',
+  },
+  matchButton: { fontSize: 13, fontWeight: '700', color: '#fff' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
   emptyText: { color: '#999', fontSize: 15, textAlign: 'center' },
   listContent: { padding: 16, paddingTop: 8 },
@@ -205,6 +272,7 @@ const styles = StyleSheet.create({
   },
   friendName: { fontSize: 16, fontWeight: '600', color: '#333' },
   owedAmount: { fontSize: 15, fontWeight: 'bold', color: '#FF9500' },
+  youOweAmount: { fontSize: 15, fontWeight: 'bold', color: '#FF3B30' },
   settledText: { fontSize: 14, color: '#34C759', fontWeight: '600' },
 });
 
