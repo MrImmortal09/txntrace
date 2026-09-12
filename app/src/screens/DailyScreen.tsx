@@ -90,6 +90,17 @@ const DailyScreen = () => {
   const debitTotal = txns.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0);
   const creditTotal = txns.filter(t => t.type === 'credit').reduce((s, t) => s + t.amount, 0);
 
+  const formatTxnDate = (dateStr?: string | null) => {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return `${d.toLocaleDateString([], { day: '2-digit', month: 'short' })} · ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } catch {
+      return dateStr || '';
+    }
+  };
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.headerRow}>
@@ -135,7 +146,7 @@ const DailyScreen = () => {
                   <View style={styles.rowMiddle}>
                     <Text style={[styles.merchant, { color: colors.text }]} numberOfLines={1}>{item.merchant_raw || 'Unknown'}</Text>
                     <Text style={[styles.meta, { color: colors.textSecondary }]}>
-                      {new Date(item.date).toLocaleDateString([], { day: '2-digit', month: 'short' })} · {new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatTxnDate(item.date)}
                       {item.category ? ` · ${item.category}` : ''}
                     </Text>
                     {item.location ? (

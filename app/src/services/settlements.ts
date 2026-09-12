@@ -404,7 +404,7 @@ export const editSettlementAmount = async (
 ): Promise<void> => {
   const roundedAmount = Math.max(0, Number(newAmount.toFixed(2)));
   if (newUnappliedAmount !== undefined && newUnappliedAmount !== null) {
-    const roundedUnapplied = Math.max(0, Number(newUnappliedAmount.toFixed(2)));
+    const roundedUnapplied = Math.min(roundedAmount, Math.max(0, Number(newUnappliedAmount.toFixed(2))));
     await db.execute(
       'UPDATE settlements SET amount = ?, unapplied_amount = ? WHERE id = ?',
       [roundedAmount, roundedUnapplied, settlementId]

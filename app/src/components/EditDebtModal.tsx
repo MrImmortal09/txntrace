@@ -73,22 +73,38 @@ export const EditDebtModal = ({
       return;
     }
 
-    setSaving(true);
-    try {
-      if (entry.kind === 'split') {
-        const totalVal = parseFloat(totalInput);
+    if (entry.kind === 'split') {
+      const totalVal = parseFloat(totalInput);
+      if (!isNaN(totalVal) && totalVal < val1) {
+        Alert.alert('Invalid Amount', 'Original expense amount cannot be less than the amount owed.');
+        return;
+      }
+      setSaving(true);
+      try {
         const validTotal = !isNaN(totalVal) && totalVal >= val1 ? totalVal : undefined;
         await editSplitAmount(entry.id, val1, validTotal);
-      } else {
-        const unappliedVal = parseFloat(totalInput);
+        onSaved();
+      } catch (err: any) {
+        Alert.alert('Error', err.message || 'Failed to update debt amount.');
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      const unappliedVal = parseFloat(totalInput);
+      if (!isNaN(unappliedVal) && unappliedVal > val1) {
+        Alert.alert('Invalid Amount', 'Excess amount owed cannot exceed the total payment amount.');
+        return;
+      }
+      setSaving(true);
+      try {
         const validUnapplied = !isNaN(unappliedVal) && unappliedVal >= 0 ? unappliedVal : undefined;
         await editSettlementAmount(entry.id, val1, validUnapplied);
+        onSaved();
+      } catch (err: any) {
+        Alert.alert('Error', err.message || 'Failed to update payment amount.');
+      } finally {
+        setSaving(false);
       }
-      onSaved();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to update debt amount.');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -122,10 +138,12 @@ export const EditDebtModal = ({
   };
 
   const formattedDateTime = (() => {
+    if (!entry.date) return '';
     try {
       const d = new Date(entry.date);
+      if (isNaN(d.getTime())) return entry.date;
       return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-    } catch (e) {
+    } catch {
       return entry.date;
     }
   })();
@@ -226,8 +244,11 @@ export const EditDebtModal = ({
               <TouchableOpacity
                 style={[styles.secondaryBtn, { borderColor: colors.border }]}
                 onPress={() => {
+                  const txnId = entry.transactionId!;
                   onClose();
-                  onViewTransaction(entry.transactionId!);
+                  setTimeout(() => {
+                    onViewTransaction(txnId);
+                  }, 150);
                 }}
               >
                 <Text style={[styles.secondaryBtnText, { color: colors.text }]}>

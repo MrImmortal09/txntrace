@@ -28,7 +28,7 @@ export const openLocationInGoogleMaps = async (
   const encodedQuery = encodeURIComponent(query);
   const googleMapsAppUrl = Platform.select({
     ios: `comgooglemaps://?q=${encodedQuery}`,
-    android: `google.navigation:q=${encodedQuery}`,
+    android: `geo:0,0?q=${encodedQuery}`,
     default: `https://www.google.com/maps/search/?api=1&query=${encodedQuery}`,
   });
   const googleMapsWebUrl = `https://www.google.com/maps/search/?api=1&query=${encodedQuery}`;

@@ -482,6 +482,11 @@ describe('Settlement Balance & Overpayment Tracking', () => {
       await editSettlementAmount('settle_edit_1', 800, 300);
       expect(mockDb.settlements[0].amount).toBe(800);
       expect(mockDb.settlements[0].unapplied_amount).toBe(300);
+
+      // Unapplied amount capped at amount
+      await editSettlementAmount('settle_edit_1', 400, 600);
+      expect(mockDb.settlements[0].amount).toBe(400);
+      expect(mockDb.settlements[0].unapplied_amount).toBe(400);
     });
 
     test('deleteSettlement removes settlement record', async () => {

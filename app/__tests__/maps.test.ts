@@ -58,4 +58,14 @@ describe('openLocationInGoogleMaps', () => {
       'https://www.google.com/maps/search/?api=1&query=Third%20Wave%20Coffee'
     );
   });
+
+  test('uses geo URI on android platform', async () => {
+    (Platform.select as jest.Mock).mockImplementationOnce((options: any) => options.android || options.default);
+    (Linking.canOpenURL as jest.Mock).mockResolvedValue(true);
+
+    await openLocationInGoogleMaps('Indiranagar 100ft Road');
+
+    expect(Linking.canOpenURL).toHaveBeenCalledWith('geo:0,0?q=Indiranagar%20100ft%20Road');
+    expect(Linking.openURL).toHaveBeenCalledWith('geo:0,0?q=Indiranagar%20100ft%20Road');
+  });
 });

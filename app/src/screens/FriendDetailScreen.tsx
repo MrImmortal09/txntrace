@@ -24,9 +24,9 @@ const FriendDetailScreen = () => {
   const loadHistory = useCallback(async () => {
     try {
       const splitsRes = await db.execute(
-        `SELECT s.id, s.transaction_id, s.amount_owed, COALESCE(s.original_amount, s.amount_owed, t.amount) as split_amount, s.settled, t.date, t.merchant_raw, t.location, t.latitude, t.longitude
-         FROM splits s JOIN transactions t ON t.id = s.transaction_id
-         WHERE s.contact_id = ? ORDER BY t.date DESC`,
+        `SELECT s.id, s.transaction_id, s.amount_owed, COALESCE(s.original_amount, s.amount_owed, t.amount, 0) as split_amount, s.settled, COALESCE(t.date, datetime('now')) as date, COALESCE(t.merchant_raw, 'Shared Expense') as merchant_raw, t.location, t.latitude, t.longitude
+         FROM splits s LEFT JOIN transactions t ON t.id = s.transaction_id
+         WHERE s.contact_id = ? ORDER BY COALESCE(t.date, datetime('now')) DESC`,
         [contactId]
       );
       const splitRows: any = splitsRes.rows;
@@ -67,7 +67,7 @@ const FriendDetailScreen = () => {
       }));
 
       const combined = [...splits, ...settlements].sort(
-        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        (a, b) => (new Date(b.date).getTime() || 0) - (new Date(a.date).getTime() || 0)
       );
       setEntries(combined);
 
@@ -146,11 +146,13 @@ const FriendDetailScreen = () => {
     }
   };
 
-  const formatDateTime = (dateStr: string) => {
+  const formatDateTime = (dateStr?: string | null) => {
+    if (!dateStr) return '';
     try {
       const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
       return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-    } catch (e) {
+    } catch {
       return dateStr;
     }
   };
@@ -277,7 +279,9 @@ const FriendDetailScreen = () => {
           loadHistory();
         }}
         onViewTransaction={(txnId) => {
-          openOriginalMessage(txnId);
+          setTimeout(() => {
+            openOriginalMessage(txnId);
+          }, 150);
         }}
       />
 

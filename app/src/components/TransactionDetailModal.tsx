@@ -62,7 +62,16 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
             {transaction.type === 'credit' ? '+' : '-'}₹{transaction.amount.toFixed(2)}
           </Text>
           <Text style={[styles.date, { color: colors.textSecondary }]}>
-            {new Date(transaction.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+            {(() => {
+              if (!transaction.date) return '';
+              try {
+                const d = new Date(transaction.date);
+                if (isNaN(d.getTime())) return transaction.date;
+                return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+              } catch {
+                return transaction.date;
+              }
+            })()}
           </Text>
 
           {transaction.location ? (

@@ -8,6 +8,7 @@ import {
   matchCreditToContact,
 } from '../services/settlements';
 import { openLocationInGoogleMaps } from '../utils/maps';
+import { useTheme } from '../theme/ThemeProvider';
 
 const SWIPE_THRESHOLD = 100;
 
@@ -37,9 +38,21 @@ interface SplitContact {
 }
 
 const ReviewScreen = () => {
+  const { colors } = useTheme();
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  const formatTxnDateTime = (dateStr?: string | null) => {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    } catch {
+      return dateStr;
+    }
+  };
 
   // Form state for current card
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -271,15 +284,17 @@ const ReviewScreen = () => {
             </Text>
             <Text style={styles.cardMerchant}>{currentTxn.merchant_raw}</Text>
             <Text style={styles.cardDate}>
-              {new Date(currentTxn.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+              {formatTxnDateTime(currentTxn.date)}
             </Text>
             {currentTxn.location ? (
               <TouchableOpacity
-                style={styles.cardLocation}
+                style={[styles.cardLocation, { backgroundColor: colors.background, borderColor: colors.border }]}
                 onPress={() => openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.cardLocationText}>📍 {currentTxn.location} <Text style={styles.mapsLink}>↗</Text></Text>
+                <Text style={[styles.cardLocationText, { color: colors.primary }]}>
+                  📍 {currentTxn.location} <Text style={styles.mapsLink}>↗</Text>
+                </Text>
               </TouchableOpacity>
             ) : null}
           </Animated.View>
@@ -430,8 +445,8 @@ const styles = StyleSheet.create({
   debit: { color: '#FF3B30' },
   cardMerchant: { fontSize: 20, textAlign: 'center', marginBottom: 10 },
   cardDate: { fontSize: 14, color: '#aaa' },
-  cardLocation: { marginTop: 8, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: '#f0f4ff', borderRadius: 12 },
-  cardLocationText: { fontSize: 13, color: '#007AFF', fontWeight: '500' },
+  cardLocation: { marginTop: 8, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, borderWidth: 1 },
+  cardLocationText: { fontSize: 13, fontWeight: '500' },
   mapsLink: { fontSize: 12, textDecorationLine: 'underline' },
   
   formContainer: { padding: 20, backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20 },
