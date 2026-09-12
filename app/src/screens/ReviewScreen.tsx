@@ -7,6 +7,8 @@ import {
   autoMatchCreditTransaction,
   matchCreditToContact,
 } from '../services/settlements';
+import { openLocationInGoogleMaps } from '../utils/maps';
+import { useTheme } from '../theme/ThemeProvider';
 
 const SWIPE_THRESHOLD = 100;
 
@@ -19,6 +21,9 @@ interface Transaction {
   date: string;
   category?: string;
   note?: string;
+  location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 interface Category {
@@ -33,9 +38,22 @@ interface SplitContact {
 }
 
 const ReviewScreen = () => {
+  const { colors } = useTheme();
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  const formatTxnDateTime = (dateStr?: string | null) => {
+    if (!dateStr) return '';
+    try {
+      const cleanDate = dateStr.includes(' ') && !dateStr.includes('T') ? dateStr.replace(' ', 'T') : dateStr;
+      const d = new Date(cleanDate);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    } catch {
+      return dateStr;
+    }
+  };
 
   // Form state for current card
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -234,20 +252,22 @@ const ReviewScreen = () => {
 
   if (txns.length === 0) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.emptyText}>All caught up! No transactions to review.</Text>
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>All caught up! No transactions to review.</Text>
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.swiperContainer}>
         {currentTxn && (
           <Animated.View
             style={[
               styles.card,
               {
+                backgroundColor: colors.surface,
+                shadowColor: colors.cardShadow,
                 transform: [
                   ...pan.getTranslateTransform(),
                   {
@@ -261,37 +281,63 @@ const ReviewScreen = () => {
             ]}
             {...panResponder.panHandlers}
           >
-            <Text style={styles.cardBank}>{currentTxn.bank}</Text>
-            <Text style={[styles.cardAmount, currentTxn.type === 'credit' ? styles.credit : styles.debit]}>
-              {currentTxn.type === 'credit' ? '+' : '-'}{currentTxn.amount}
+            <Text style={[styles.cardBank, { color: colors.textSecondary }]}>{currentTxn.bank}</Text>
+            <Text style={[styles.cardAmount, { color: currentTxn.type === 'credit' ? colors.success : colors.danger }]}>
+              {currentTxn.type === 'credit' ? '+' : '-'}₹{currentTxn.amount.toFixed(2)}
             </Text>
-            <Text style={styles.cardMerchant}>{currentTxn.merchant_raw}</Text>
-            <Text style={styles.cardDate}>{new Date(currentTxn.date).toLocaleDateString()}</Text>
+            <Text style={[styles.cardMerchant, { color: colors.text }]}>{currentTxn.merchant_raw}</Text>
+            <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
+              {formatTxnDateTime(currentTxn.date)}
+            </Text>
+            {currentTxn.location ? (
+              <TouchableOpacity
+                style={[styles.cardLocation, { backgroundColor: colors.background, borderColor: colors.border }]}
+                onPress={() => openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.cardLocationText, { color: colors.primary }]}>
+                  📍 {currentTxn.location} <Text style={styles.mapsLink}>↗</Text>
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </Animated.View>
         )}
       </View>
 
       {currentTxn && (
-        <View style={styles.formContainer}>
-          <Text style={styles.label}>Category</Text>
+        <View style={[styles.formContainer, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+          <Text style={[styles.label, { color: colors.text }]}>Category</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
             {categories.map((cat) => (
               <TouchableOpacity
                 key={cat.id}
-                style={[styles.chip, selectedCategoryId === cat.id && styles.chipSelected]}
+                style={[
+                  styles.chip,
+                  {
+                    backgroundColor: selectedCategoryId === cat.id ? colors.primary : colors.background,
+                    borderColor: colors.border,
+                  },
+                ]}
                 onPress={() => setSelectedCategoryId(cat.id)}
               >
-                <Text style={selectedCategoryId === cat.id ? styles.chipTextSelected : styles.chipText}>
+                <Text
+                  style={
+                    selectedCategoryId === cat.id
+                      ? styles.chipTextSelected
+                      : [styles.chipText, { color: colors.text }]
+                  }
+                >
                   {cat.name}
                 </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
 
-          <Text style={styles.label}>Note</Text>
+          <Text style={[styles.label, { color: colors.text }]}>Note</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
             placeholder="Why was this spend?"
+            placeholderTextColor={colors.textSecondary}
             value={note}
             onChangeText={setNote}
           />
@@ -330,19 +376,20 @@ const ReviewScreen = () => {
 
       {/* Split Modal */}
       <Modal visible={splitModalVisible} animationType="slide" presentationStyle="pageSheet">
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
+        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
               {currentTxn?.type === 'credit' ? 'Match Credit with Friend' : 'Split with Contacts'}
             </Text>
             <TouchableOpacity onPress={() => setSplitModalVisible(false)}>
-              <Text style={styles.doneText}>Done</Text>
+              <Text style={[styles.doneText, { color: colors.primary }]}>Done</Text>
             </TouchableOpacity>
           </View>
 
           <TextInput
-            style={styles.contactSearch}
+            style={[styles.contactSearch, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
             placeholder="Search contacts"
+            placeholderTextColor={colors.textSecondary}
             value={contactQuery}
             onChangeText={setContactQuery}
           />
@@ -357,19 +404,29 @@ const ReviewScreen = () => {
               const usedRecently = !!contactRecency[item.recordID];
 
               return (
-                <View style={styles.contactRow}>
+                <View style={[styles.contactRow, { borderBottomColor: colors.border }]}>
                   <TouchableOpacity
                     style={styles.contactInfo}
                     onPress={() => toggleContactSelection(item)}
                   >
-                    <View style={[styles.checkbox, isSelected && styles.checkboxSelected]} />
-                    <Text style={styles.contactName}>{name}</Text>
-                    {usedRecently && !isSelected && <Text style={styles.recentTag}>recent</Text>}
+                    <View
+                      style={[
+                        styles.checkbox,
+                        { borderColor: colors.border },
+                        isSelected && [styles.checkboxSelected, { backgroundColor: colors.primary, borderColor: colors.primary }],
+                      ]}
+                    />
+                    <Text style={[styles.contactName, { color: colors.text }]}>{name}</Text>
+                    {usedRecently && !isSelected && (
+                      <Text style={[styles.recentTag, { borderColor: colors.border, color: colors.textSecondary }]}>
+                        recent
+                      </Text>
+                    )}
                   </TouchableOpacity>
 
                   {isSelected && (
                     <TextInput
-                      style={styles.splitInput}
+                      style={[styles.splitInput, { borderBottomColor: colors.border, color: colors.text }]}
                       keyboardType="numeric"
                       value={String(splitContact?.amountOwed || '')}
                       onChangeText={(val) => {
@@ -377,6 +434,7 @@ const ReviewScreen = () => {
                           c.id === item.recordID ? { ...c, amountOwed: Number(val) } : c
                         ));
                       }}
+                      placeholderTextColor={colors.textSecondary}
                     />
                   )}
                 </View>
@@ -391,57 +449,58 @@ const ReviewScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f0f0' },
+  container: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { fontSize: 18, color: '#888' },
+  emptyText: { fontSize: 18 },
   swiperContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   card: {
     width: '88%',
     height: 300,
-    backgroundColor: '#fff',
     borderRadius: 20,
     padding: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
     shadowOpacity: 0.1,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
     elevation: 5,
   },
-  cardBank: { fontSize: 16, color: '#888', marginBottom: 10 },
+  cardBank: { fontSize: 16, marginBottom: 10 },
   cardAmount: { fontSize: 40, fontWeight: 'bold', marginBottom: 10 },
   credit: { color: '#34C759' },
   debit: { color: '#FF3B30' },
   cardMerchant: { fontSize: 20, textAlign: 'center', marginBottom: 10 },
-  cardDate: { fontSize: 14, color: '#aaa' },
+  cardDate: { fontSize: 14 },
+  cardLocation: { marginTop: 8, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, borderWidth: 1 },
+  cardLocationText: { fontSize: 13, fontWeight: '500' },
+  mapsLink: { fontSize: 12, textDecorationLine: 'underline' },
   
-  formContainer: { padding: 20, backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  formContainer: { padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1 },
   label: { fontSize: 16, fontWeight: '600', marginBottom: 10 },
   categoryScroll: { marginBottom: 20 },
-  chip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#eee', marginRight: 10, alignSelf: 'flex-start' },
-  chipSelected: { backgroundColor: '#007AFF' },
-  chipText: { color: '#333' },
+  chip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginRight: 10, alignSelf: 'flex-start', borderWidth: 1 },
+  chipSelected: {},
+  chipText: {},
   chipTextSelected: { color: '#fff', fontWeight: 'bold' },
-  input: { backgroundColor: '#f9f9f9', padding: 12, borderRadius: 10, marginBottom: 20, borderWidth: 1, borderColor: '#eee' },
+  input: { padding: 12, borderRadius: 10, marginBottom: 20, borderWidth: 1 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
   splitButton: { flex: 1, backgroundColor: '#FF9500', padding: 14, borderRadius: 10, alignItems: 'center', marginRight: 10 },
   splitButtonText: { color: '#fff', fontWeight: 'bold' },
   reviewButton: { flex: 1, backgroundColor: '#34C759', padding: 14, borderRadius: 10, alignItems: 'center' },
   reviewButtonText: { color: '#fff', fontWeight: 'bold' },
 
-  modalContainer: { flex: 1, backgroundColor: '#fff' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, borderBottomWidth: 1, borderBottomColor: '#eee' },
+  modalContainer: { flex: 1 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, borderBottomWidth: 1 },
   modalTitle: { fontSize: 18, fontWeight: 'bold' },
-  doneText: { fontSize: 16, color: '#007AFF', fontWeight: 'bold' },
-  contactSearch: { margin: 16, backgroundColor: '#f2f2f2', borderRadius: 10, padding: 12, fontSize: 15 },
-  contactRow: { flexDirection: 'row', padding: 15, borderBottomWidth: 1, borderBottomColor: '#eee', alignItems: 'center' },
+  doneText: { fontSize: 16, fontWeight: 'bold' },
+  contactSearch: { margin: 16, borderRadius: 10, padding: 12, fontSize: 15, borderWidth: 1 },
+  contactRow: { flexDirection: 'row', padding: 15, borderBottomWidth: 1, alignItems: 'center' },
   contactInfo: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  checkbox: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#ccc', marginRight: 15 },
-  checkboxSelected: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
+  checkbox: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, marginRight: 15 },
+  checkboxSelected: {},
   contactName: { fontSize: 16 },
-  recentTag: { fontSize: 11, color: '#888', marginLeft: 8, borderWidth: 1, borderColor: '#ddd', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-  splitInput: { width: 80, borderBottomWidth: 1, borderBottomColor: '#ccc', textAlign: 'right', fontSize: 16, padding: 5 }
+  recentTag: { fontSize: 11, marginLeft: 8, borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  splitInput: { width: 80, borderBottomWidth: 1, textAlign: 'right', fontSize: 16, padding: 5 }
 });
 
 export default ReviewScreen;

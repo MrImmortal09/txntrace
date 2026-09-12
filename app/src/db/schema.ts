@@ -24,7 +24,10 @@ export const setupDatabase = async () => {
       sender TEXT,
       sms_body TEXT,
       needs_contact_match INTEGER DEFAULT 0, -- boolean: a credit with an unmapped payer name
-      card_id TEXT
+      card_id TEXT,
+      location TEXT,
+      latitude REAL,
+      longitude REAL
     );
   `);
 
@@ -36,6 +39,24 @@ export const setupDatabase = async () => {
   // be told apart from one only ever set at import time — see webSync.ts.
   try {
     await db.execute(`ALTER TABLE transactions ADD COLUMN updated_at TEXT;`);
+  } catch (error) {
+    // Already migrated.
+  }
+
+  try {
+    await db.execute(`ALTER TABLE transactions ADD COLUMN location TEXT;`);
+  } catch (error) {
+    // Already migrated.
+  }
+
+  try {
+    await db.execute(`ALTER TABLE transactions ADD COLUMN latitude REAL;`);
+  } catch (error) {
+    // Already migrated.
+  }
+
+  try {
+    await db.execute(`ALTER TABLE transactions ADD COLUMN longitude REAL;`);
   } catch (error) {
     // Already migrated.
   }
@@ -69,9 +90,16 @@ export const setupDatabase = async () => {
       type TEXT,
       merchant TEXT,
       reference TEXT,
-      logged_at TEXT
+      logged_at TEXT,
+      location TEXT
     );
   `);
+
+  try {
+    await db.execute(`ALTER TABLE sms_log ADD COLUMN location TEXT;`);
+  } catch (error) {
+    // Already migrated.
+  }
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS splits (

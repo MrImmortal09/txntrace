@@ -53,6 +53,9 @@ interface RemoteTransaction {
   sms_body: string | null;
   needs_contact_match?: number;
   card_id?: string | null;
+  location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 /**
@@ -81,8 +84,8 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
     const updatedAt = txn.updated_at || txn.created_at;
     const query = fullPull
       ? `INSERT INTO transactions
-          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            bank = excluded.bank,
            amount = excluded.amount,
@@ -101,10 +104,13 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
            sender = excluded.sender,
            sms_body = excluded.sms_body,
            needs_contact_match = excluded.needs_contact_match,
-           card_id = excluded.card_id`
+           card_id = excluded.card_id,
+           location = excluded.location,
+           latitude = excluded.latitude,
+           longitude = excluded.longitude`
       : `INSERT INTO transactions
-          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            bank = excluded.bank,
            amount = excluded.amount,
@@ -122,7 +128,10 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
            sender = excluded.sender,
            sms_body = excluded.sms_body,
            needs_contact_match = excluded.needs_contact_match,
-           card_id = excluded.card_id
+           card_id = excluded.card_id,
+           location = excluded.location,
+           latitude = excluded.latitude,
+           longitude = excluded.longitude
          WHERE excluded.updated_at > COALESCE(transactions.updated_at, transactions.created_at, '')`;
 
     const result = await db.execute(query, [
@@ -145,9 +154,12 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
       txn.sms_body,
       txn.needs_contact_match ?? 0,
       txn.card_id ?? null,
+      txn.location ?? null,
+      txn.latitude ?? null,
+      txn.longitude ?? null,
     ]);
     imported += result.rowsAffected;
-    if (updatedAt && (!latestUpdatedAt || updatedAt > latestUpdatedAt)) latestUpdatedAt = updatedAt;
+    if (!latestUpdatedAt || updatedAt > latestUpdatedAt) latestUpdatedAt = updatedAt;
   }
 
   if (latestUpdatedAt) await setSetting(LAST_SYNC_KEY, latestUpdatedAt);
