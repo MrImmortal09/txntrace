@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     note TEXT,
     reviewed INTEGER DEFAULT 0,
     created_at TEXT,
+    updated_at TEXT,
     reference TEXT,
     account_last4 TEXT,
     balance REAL,

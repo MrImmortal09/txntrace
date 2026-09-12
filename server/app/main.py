@@ -678,20 +678,45 @@ async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_
     now = datetime.now(timezone.utc).isoformat()
 
     with get_db() as conn:
+        cur = conn.cursor()
         if overwrite:
-            conn.execute("DELETE FROM splits WHERE user_id = %s", (user_id,))
-            conn.execute("DELETE FROM settlements WHERE user_id = %s", (user_id,))
-            conn.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM splits WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM settlements WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
             if cards:
-                conn.execute("DELETE FROM cards WHERE user_id = %s", (user_id,))
+                cur.execute("DELETE FROM cards WHERE user_id = %s", (user_id,))
             if contacts:
-                conn.execute("DELETE FROM contacts WHERE user_id = %s", (user_id,))
+                cur.execute("DELETE FROM contacts WHERE user_id = %s", (user_id,))
 
         # 1. Insert/Upsert Transactions
-        for t in transactions:
-            t_created = t.get("created_at") or now
-            t_updated = t.get("updated_at") or t_created
-            conn.execute(
+        tx_records = [
+            (
+                t["id"],
+                t.get("bank"),
+                t.get("amount"),
+                t.get("type"),
+                t.get("merchant_raw"),
+                t.get("date"),
+                t.get("source"),
+                t.get("category"),
+                t.get("note"),
+                1 if t.get("reviewed") else 0,
+                t.get("created_at") or now,
+                t.get("updated_at") or t.get("created_at") or now,
+                t.get("reference"),
+                t.get("account_last4"),
+                t.get("balance"),
+                t.get("sender"),
+                t.get("sms_body"),
+                t.get("card_id"),
+                1 if t.get("needs_contact_match") else 0,
+                user_id,
+            )
+            for t in transactions
+            if isinstance(t, dict) and t.get("id")
+        ]
+        if tx_records:
+            cur.executemany(
                 """INSERT INTO transactions
                    (id, bank, amount, type, merchant_raw, date, source, category, note,
                     reviewed, created_at, updated_at, reference, account_last4, balance,
@@ -715,35 +740,33 @@ async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_
                      sender = EXCLUDED.sender,
                      sms_body = EXCLUDED.sms_body,
                      card_id = EXCLUDED.card_id,
-                     needs_contact_match = EXCLUDED.needs_contact_match""",
-                (
-                    t["id"],
-                    t.get("bank"),
-                    t.get("amount"),
-                    t.get("type"),
-                    t.get("merchant_raw"),
-                    t.get("date"),
-                    t.get("source"),
-                    t.get("category"),
-                    t.get("note"),
-                    1 if t.get("reviewed") else 0,
-                    t_created,
-                    t_updated,
-                    t.get("reference"),
-                    t.get("account_last4"),
-                    t.get("balance"),
-                    t.get("sender"),
-                    t.get("sms_body"),
-                    t.get("card_id"),
-                    1 if t.get("needs_contact_match") else 0,
-                    user_id,
-                ),
+                     needs_contact_match = EXCLUDED.needs_contact_match,
+                     user_id = EXCLUDED.user_id
+                   WHERE transactions.user_id = EXCLUDED.user_id OR transactions.user_id IS NULL""",
+                tx_records,
             )
 
         # 2. Insert/Upsert Splits
-        for s in splits:
-            s_created = s.get("created_at") or now
-            conn.execute(
+        split_records = [
+            (
+                s["id"],
+                s.get("transaction_id"),
+                s.get("contact_id"),
+                s.get("contact_name"),
+                s.get("amount_owed"),
+                s.get("original_amount"),
+                1 if s.get("settled") else 0,
+                s.get("created_at") or now,
+                s.get("txn_date"),
+                s.get("txn_merchant"),
+                s.get("txn_amount"),
+                user_id,
+            )
+            for s in splits
+            if isinstance(s, dict) and s.get("id")
+        ]
+        if split_records:
+            cur.executemany(
                 """INSERT INTO splits
                    (id, transaction_id, contact_id, contact_name, amount_owed, original_amount,
                     settled, created_at, txn_date, txn_merchant, txn_amount, user_id)
@@ -757,27 +780,31 @@ async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_
                      settled = EXCLUDED.settled,
                      txn_date = EXCLUDED.txn_date,
                      txn_merchant = EXCLUDED.txn_merchant,
-                     txn_amount = EXCLUDED.txn_amount""",
-                (
-                    s["id"],
-                    s.get("transaction_id"),
-                    s.get("contact_id"),
-                    s.get("contact_name"),
-                    s.get("amount_owed"),
-                    s.get("original_amount"),
-                    1 if s.get("settled") else 0,
-                    s_created,
-                    s.get("txn_date"),
-                    s.get("txn_merchant"),
-                    s.get("txn_amount"),
-                    user_id,
-                ),
+                     txn_amount = EXCLUDED.txn_amount,
+                     user_id = EXCLUDED.user_id
+                   WHERE splits.user_id = EXCLUDED.user_id OR splits.user_id IS NULL""",
+                split_records,
             )
 
         # 3. Insert/Upsert Settlements
-        for st in settlements:
-            st_created = st.get("created_at") or now
-            conn.execute(
+        settlement_records = [
+            (
+                st["id"],
+                st.get("contact_id"),
+                st.get("contact_name"),
+                st.get("amount"),
+                st.get("unapplied_amount") or 0,
+                st.get("transaction_id"),
+                st.get("matched_split_id"),
+                st.get("date"),
+                st.get("created_at") or now,
+                user_id,
+            )
+            for st in settlements
+            if isinstance(st, dict) and st.get("id")
+        ]
+        if settlement_records:
+            cur.executemany(
                 """INSERT INTO settlements
                    (id, contact_id, contact_name, amount, unapplied_amount, transaction_id,
                     matched_split_id, date, created_at, user_id)
@@ -790,25 +817,30 @@ async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_
                      transaction_id = EXCLUDED.transaction_id,
                      matched_split_id = EXCLUDED.matched_split_id,
                      date = EXCLUDED.date,
-                     created_at = EXCLUDED.created_at""",
-                (
-                    st["id"],
-                    st.get("contact_id"),
-                    st.get("contact_name"),
-                    st.get("amount"),
-                    st.get("unapplied_amount") or 0,
-                    st.get("transaction_id"),
-                    st.get("matched_split_id"),
-                    st.get("date"),
-                    st_created,
-                    user_id,
-                ),
+                     created_at = EXCLUDED.created_at,
+                     user_id = EXCLUDED.user_id
+                   WHERE settlements.user_id = EXCLUDED.user_id OR settlements.user_id IS NULL""",
+                settlement_records,
             )
 
         # 4. Insert/Upsert Cards (if provided)
-        for c in cards:
-            c_created = c.get("created_at") or now
-            conn.execute(
+        card_records = [
+            (
+                c["id"],
+                c.get("name"),
+                c.get("bank"),
+                (c.get("last4") or "").strip() or None,
+                c.get("credit_limit"),
+                1 if c.get("is_credit_card", True) else 0,
+                (c.get("custom_pattern") or "").strip() or None,
+                c.get("created_at") or now,
+                user_id,
+            )
+            for c in cards
+            if isinstance(c, dict) and c.get("id")
+        ]
+        if card_records:
+            cur.executemany(
                 """INSERT INTO cards
                    (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at, user_id)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -818,37 +850,39 @@ async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_
                      last4 = EXCLUDED.last4,
                      credit_limit = EXCLUDED.credit_limit,
                      is_credit_card = EXCLUDED.is_credit_card,
-                     custom_pattern = EXCLUDED.custom_pattern""",
-                (
-                    c["id"],
-                    c.get("name"),
-                    c.get("bank"),
-                    (c.get("last4") or "").strip() or None,
-                    c.get("credit_limit"),
-                    1 if c.get("is_credit_card", True) else 0,
-                    (c.get("custom_pattern") or "").strip() or None,
-                    c_created,
-                    user_id,
-                ),
+                     custom_pattern = EXCLUDED.custom_pattern,
+                     user_id = EXCLUDED.user_id
+                   WHERE cards.user_id = EXCLUDED.user_id OR cards.user_id IS NULL""",
+                card_records,
             )
 
         # 5. Insert/Upsert Contacts (if provided)
-        for ct in contacts:
-            c_id = ct.get("id")
-            c_name = (ct.get("name") or "").strip()
-            if c_id and c_name:
-                conn.execute(
-                    """INSERT INTO contacts (id, name, created_at, user_id)
-                       VALUES (%s, %s, %s, %s)
-                       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name""",
-                    (c_id, c_name, now, user_id),
-                )
+        contact_records = [
+            (
+                ct["id"],
+                (ct.get("name") or "").strip(),
+                now,
+                user_id,
+            )
+            for ct in contacts
+            if isinstance(ct, dict) and ct.get("id") and (ct.get("name") or "").strip()
+        ]
+        if contact_records:
+            cur.executemany(
+                """INSERT INTO contacts (id, name, created_at, user_id)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     name = EXCLUDED.name,
+                     user_id = EXCLUDED.user_id
+                   WHERE contacts.user_id = EXCLUDED.user_id OR contacts.user_id IS NULL""",
+                contact_records,
+            )
 
     return {
         "success": True,
-        "transactions_count": len(transactions),
-        "splits_count": len(splits),
-        "settlements_count": len(settlements),
-        "cards_count": len(cards),
-        "contacts_count": len(contacts),
+        "transactions_count": len(tx_records),
+        "splits_count": len(split_records),
+        "settlements_count": len(settlement_records),
+        "cards_count": len(card_records),
+        "contacts_count": len(contact_records),
     }

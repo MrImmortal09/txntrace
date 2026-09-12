@@ -28,6 +28,7 @@ const SettingsScreen = () => {
   const [reparsing, setReparsing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<'sync' | 'backup' | null>(null);
 
@@ -168,7 +169,7 @@ const SettingsScreen = () => {
   };
 
   const executePullServer = async () => {
-    setBackingUp(true);
+    setRestoring(true);
     try {
       const res = await restoreFromServer();
       Alert.alert(
@@ -183,11 +184,11 @@ const SettingsScreen = () => {
       Alert.alert('Pull Failed', e.message || 'Failed to pull server data.');
       log(`Pull server FAILED ❌: ${e.message}`);
     } finally {
-      setBackingUp(false);
+      setRestoring(false);
     }
   };
 
-  const executeOverwriteServer = async (isOverwrite = true) => {
+  const executeBackupToServer = async (isOverwrite = true) => {
     setBackingUp(true);
     try {
       let contactsPayload: { id: string; name: string }[] = [];
@@ -249,7 +250,7 @@ const SettingsScreen = () => {
             {
               text: 'Overwrite with Local',
               style: 'destructive',
-              onPress: () => executeOverwriteServer(true),
+              onPress: () => executeBackupToServer(true),
             },
             {
               text: 'Cancel',
@@ -260,7 +261,7 @@ const SettingsScreen = () => {
           { cancelable: true, onDismiss: () => setBackingUp(false) }
         );
       } else {
-        await executeOverwriteServer(false);
+        await executeBackupToServer(false);
       }
     } catch (e: any) {
       setBackingUp(false);
@@ -391,14 +392,16 @@ const SettingsScreen = () => {
         <TouchableOpacity
           style={[styles.button, { backgroundColor: colors.primary }]}
           onPress={handleBackup}
-          disabled={backingUp || syncing}
+          disabled={backingUp || restoring || syncing}
         >
-          <Text style={styles.buttonText}>{backingUp ? 'Backing up…' : 'Backup to Server'}</Text>
+          <Text style={styles.buttonText}>
+            {restoring ? 'Restoring…' : backingUp ? 'Backing up…' : 'Backup to Server'}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.button, styles.buttonSecondary, { borderColor: colors.border, marginTop: 10 }]}
           onPress={handleSync}
-          disabled={backingUp || syncing}
+          disabled={backingUp || restoring || syncing}
         >
           <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>{syncing ? 'Syncing…' : 'Sync with Web'}</Text>
         </TouchableOpacity>

@@ -147,7 +147,7 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
       txn.card_id ?? null,
     ]);
     imported += result.rowsAffected;
-    if (!latestUpdatedAt || updatedAt > latestUpdatedAt) latestUpdatedAt = updatedAt;
+    if (updatedAt && (!latestUpdatedAt || updatedAt > latestUpdatedAt)) latestUpdatedAt = updatedAt;
   }
 
   if (latestUpdatedAt) await setSetting(LAST_SYNC_KEY, latestUpdatedAt);
@@ -275,7 +275,7 @@ export const syncSplitsFromServer = async (fullPull = false): Promise<{ imported
       ]
     );
     imported += result.rowsAffected;
-    if (!latestCreatedAt || split.created_at > latestCreatedAt) latestCreatedAt = split.created_at;
+    if (split.created_at && (!latestCreatedAt || split.created_at > latestCreatedAt)) latestCreatedAt = split.created_at;
   }
 
   if (latestCreatedAt) await setSetting(LAST_SPLITS_SYNC_KEY, latestCreatedAt);
@@ -368,7 +368,7 @@ export const syncSettlementsFromServer = async (fullPull = false): Promise<{ imp
       ]
     );
     imported += result.rowsAffected;
-    if (!latestCreatedAt || s.created_at > latestCreatedAt) latestCreatedAt = s.created_at;
+    if (s.created_at && (!latestCreatedAt || s.created_at > latestCreatedAt)) latestCreatedAt = s.created_at;
   }
 
   if (latestCreatedAt) await setSetting(LAST_SETTLEMENTS_SYNC_KEY, latestCreatedAt);
@@ -480,6 +480,27 @@ export const backupLocalToServer = async (options: {
 
   if (!res.ok) throw new Error(`Backup failed: Server responded with ${res.status}`);
   const data = await res.json();
+
+  // Advance sync cursors to match the local state that was just backed up to server
+  let latestTxnTime: string | null = null;
+  for (const t of transactions) {
+    const tTime = t.updated_at || t.created_at;
+    if (tTime && (!latestTxnTime || tTime > latestTxnTime)) latestTxnTime = tTime;
+  }
+  if (latestTxnTime) await setSetting(LAST_SYNC_KEY, latestTxnTime);
+
+  let latestSplitTime: string | null = null;
+  for (const s of splits) {
+    if (s.created_at && (!latestSplitTime || s.created_at > latestSplitTime)) latestSplitTime = s.created_at;
+  }
+  if (latestSplitTime) await setSetting(LAST_SPLITS_SYNC_KEY, latestSplitTime);
+
+  let latestSettlementTime: string | null = null;
+  for (const st of settlements) {
+    if (st.created_at && (!latestSettlementTime || st.created_at > latestSettlementTime)) latestSettlementTime = st.created_at;
+  }
+  if (latestSettlementTime) await setSetting(LAST_SETTLEMENTS_SYNC_KEY, latestSettlementTime);
+
   return {
     success: true,
     transactions: data.transactions_count ?? transactions.length,

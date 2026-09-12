@@ -458,4 +458,35 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
     expect(overwriteResult.success).toBe(true);
     expect(overwriteResult.transactions).toBe(1);
   });
+
+  it('backupLocalToServer updates last sync cursors to latest backed up timestamps', async () => {
+    dbStore.transactions = [
+      { id: 'tx_1', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-12T15:30:00Z' },
+    ];
+    dbStore.splits = [
+      { id: 'sp_1', transaction_id: 'tx_1', contact_id: 'c1', contact_name: 'A', amount_owed: 100, settled: 0, created_at: '2026-09-12T14:00:00Z' },
+    ];
+    dbStore.settlements = [
+      { id: 'st_1', contact_id: 'c1', contact_name: 'A', amount: 50, date: '2026-09-12', created_at: '2026-09-12T16:00:00Z' },
+    ];
+
+    (global as any).fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        transactions_count: 1,
+        splits_count: 1,
+        settlements_count: 1,
+        cards_count: 0,
+        contacts_count: 0,
+      }),
+    } as any));
+
+    await backupLocalToServer({ overwrite: false });
+
+    expect(settingsStore['web_sync_last_created_at']).toBe('2026-09-12T15:30:00Z');
+    expect(settingsStore['web_sync_last_split_created_at']).toBe('2026-09-12T14:00:00Z');
+    expect(settingsStore['web_sync_last_settlement_created_at']).toBe('2026-09-12T16:00:00Z');
+  });
 });
