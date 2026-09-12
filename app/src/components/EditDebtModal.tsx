@@ -151,6 +151,15 @@ export const EditDebtModal = ({
 
   const isSplit = entry.kind === 'split';
 
+  const handleViewOriginal = () => {
+    if (entry.transactionId && onViewTransaction) {
+      onClose();
+      onViewTransaction(entry.transactionId);
+    } else {
+      Alert.alert('No Transaction', 'No original transaction linked to this entry.');
+    }
+  };
+
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView
@@ -170,13 +179,32 @@ export const EditDebtModal = ({
 
           <ScrollView style={styles.scrollBody} keyboardShouldPersistTaps="handled">
             <View style={[styles.infoBox, { backgroundColor: colors.background, borderColor: colors.border }]}>
-              <Text style={[styles.merchantName, { color: colors.text }]}>
-                {isSplit
-                  ? entry.merchant?.toLowerCase().startsWith('paid back')
-                    ? `You paid back ${contactName}`
-                    : `You paid for ${entry.merchant || 'Shared Expense'}`
-                  : `${contactName} paid you`}
-              </Text>
+              <TouchableOpacity
+                onPress={handleViewOriginal}
+                disabled={!entry.transactionId || !onViewTransaction}
+                activeOpacity={entry.transactionId && onViewTransaction ? 0.6 : 1}
+                style={styles.merchantHeaderTouch}
+              >
+                <View style={styles.merchantHeaderRow}>
+                  <Text style={[styles.merchantName, { color: colors.text, flex: 1 }]}>
+                    {isSplit
+                      ? entry.merchant?.toLowerCase().startsWith('paid back')
+                        ? `You paid back ${contactName}`
+                        : `You paid for ${entry.merchant || 'Shared Expense'}`
+                      : `${contactName} paid you`}
+                  </Text>
+                  {entry.transactionId && onViewTransaction ? (
+                    <Text style={[styles.viewOriginalLinkText, { color: colors.primary }]}>
+                      View Txn ↗
+                    </Text>
+                  ) : null}
+                </View>
+                {entry.transactionId && onViewTransaction ? (
+                  <Text style={[styles.clickToViewHint, { color: colors.primary }]}>
+                    Tap to view original transaction
+                  </Text>
+                ) : null}
+              </TouchableOpacity>
               <Text style={[styles.dateTimeText, { color: colors.textSecondary }]}>
                 🕒 {formattedDateTime}
               </Text>
@@ -298,7 +326,17 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
   },
-  merchantName: { fontSize: 16, fontWeight: '600', marginBottom: 4 },
+  merchantHeaderTouch: {
+    marginBottom: 6,
+  },
+  merchantHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  merchantName: { fontSize: 16, fontWeight: '700' },
+  viewOriginalLinkText: { fontSize: 12, fontWeight: '700', marginLeft: 8 },
+  clickToViewHint: { fontSize: 11, marginTop: 2, fontWeight: '500' },
   dateTimeText: { fontSize: 13, marginTop: 4 },
   locationContainer: { marginTop: 8 },
   locationText: { fontSize: 13, fontWeight: '500' },

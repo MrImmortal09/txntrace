@@ -67,6 +67,32 @@ const ReviewScreen = () => {
   const [selectedContacts, setSelectedContacts] = useState<SplitContact[]>([]);
 
   const pan = useRef(new Animated.ValueXY()).current;
+  const lastCardTapRef = useRef<number>(0);
+  const cardTapTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (cardTapTimerRef.current) clearTimeout(cardTapTimerRef.current);
+    };
+  }, []);
+
+  const handleCardPress = () => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 280;
+    if (now - lastCardTapRef.current < DOUBLE_TAP_DELAY) {
+      if (cardTapTimerRef.current) {
+        clearTimeout(cardTapTimerRef.current);
+        cardTapTimerRef.current = null;
+      }
+      lastCardTapRef.current = 0;
+      advance(1);
+    } else {
+      lastCardTapRef.current = now;
+      cardTapTimerRef.current = setTimeout(() => {
+        lastCardTapRef.current = 0;
+      }, DOUBLE_TAP_DELAY);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -281,25 +307,34 @@ const ReviewScreen = () => {
             ]}
             {...panResponder.panHandlers}
           >
-            <Text style={[styles.cardBank, { color: colors.textSecondary }]}>{currentTxn.bank}</Text>
-            <Text style={[styles.cardAmount, { color: currentTxn.type === 'credit' ? colors.success : colors.danger }]}>
-              {currentTxn.type === 'credit' ? '+' : '-'}₹{currentTxn.amount.toFixed(2)}
-            </Text>
-            <Text style={[styles.cardMerchant, { color: colors.text }]}>{currentTxn.merchant_raw}</Text>
-            <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
-              {formatTxnDateTime(currentTxn.date)}
-            </Text>
-            {currentTxn.location ? (
-              <TouchableOpacity
-                style={[styles.cardLocation, { backgroundColor: colors.background, borderColor: colors.border }]}
-                onPress={() => openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.cardLocationText, { color: colors.primary }]}>
-                  📍 {currentTxn.location} <Text style={styles.mapsLink}>↗</Text>
-                </Text>
-              </TouchableOpacity>
-            ) : null}
+            <TouchableOpacity
+              activeOpacity={0.95}
+              onPress={handleCardPress}
+              style={styles.cardInnerTouchable}
+            >
+              <Text style={[styles.cardBank, { color: colors.textSecondary }]}>{currentTxn.bank}</Text>
+              <Text style={[styles.cardAmount, { color: currentTxn.type === 'credit' ? colors.success : colors.danger }]}>
+                {currentTxn.type === 'credit' ? '+' : '-'}₹{currentTxn.amount.toFixed(2)}
+              </Text>
+              <Text style={[styles.cardMerchant, { color: colors.text }]}>{currentTxn.merchant_raw}</Text>
+              <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
+                {formatTxnDateTime(currentTxn.date)}
+              </Text>
+              {currentTxn.location ? (
+                <TouchableOpacity
+                  style={[styles.cardLocation, { backgroundColor: colors.background, borderColor: colors.border }]}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.cardLocationText, { color: colors.primary }]}>
+                    📍 {currentTxn.location} <Text style={styles.mapsLink}>↗</Text>
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </TouchableOpacity>
           </Animated.View>
         )}
       </View>
@@ -464,6 +499,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
     elevation: 5,
+  },
+  cardInnerTouchable: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cardBank: { fontSize: 16, marginBottom: 10 },
   cardAmount: { fontSize: 40, fontWeight: 'bold', marginBottom: 10 },
