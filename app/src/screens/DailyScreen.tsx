@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Line } from 'react-native-svg';
@@ -27,6 +27,15 @@ const DailyScreen = () => {
   const [splitting, setSplitting] = useState<Transaction | null>(null);
   const [friendMatchingTxn, setFriendMatchingTxn] = useState<Transaction | null>(null);
   const [pasteModalVisible, setPasteModalVisible] = useState(false);
+  const lastTapRef = useRef<{ [id: string]: number }>({});
+  const singleTapTimerRef = useRef<{ [id: string]: any }>({});
+  const ignoringTapsRef = useRef<{ [id: string]: number }>({});
+
+  useEffect(() => {
+    return () => {
+      Object.values(singleTapTimerRef.current).forEach(clearTimeout);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -51,12 +60,49 @@ const DailyScreen = () => {
   );
 
   const confirmMine = async (txn: Transaction) => {
+    if (singleTapTimerRef.current[txn.id]) {
+      clearTimeout(singleTapTimerRef.current[txn.id]);
+      delete singleTapTimerRef.current[txn.id];
+    }
+    delete lastTapRef.current[txn.id];
     setTxns(prev => prev.filter(t => t.id !== txn.id));
     try {
       await markTransactionAsMine(txn.id);
     } catch (error) {
       console.error('Failed to confirm transaction as mine:', error);
       load();
+    }
+  };
+
+  const handleRowPress = (txn: Transaction) => {
+    const now = Date.now();
+    if (now < (ignoringTapsRef.current[txn.id] || 0)) {
+      return;
+    }
+
+    const lastTap = lastTapRef.current[txn.id] || 0;
+    const DOUBLE_TAP_DELAY = 280;
+
+    if (now - lastTap < DOUBLE_TAP_DELAY) {
+      // Double tap detected: cancel single-tap timer and mark transaction as mine
+      if (singleTapTimerRef.current[txn.id]) {
+        clearTimeout(singleTapTimerRef.current[txn.id]);
+        delete singleTapTimerRef.current[txn.id];
+      }
+      delete lastTapRef.current[txn.id];
+      ignoringTapsRef.current[txn.id] = now + 1000;
+      confirmMine(txn);
+    } else {
+      // First tap: delay detail modal open until double tap window elapses
+      lastTapRef.current[txn.id] = now;
+      if (singleTapTimerRef.current[txn.id]) {
+        clearTimeout(singleTapTimerRef.current[txn.id]);
+      }
+      singleTapTimerRef.current[txn.id] = setTimeout(() => {
+        delete singleTapTimerRef.current[txn.id];
+        delete lastTapRef.current[txn.id];
+        setSelected(txn);
+      }, DOUBLE_TAP_DELAY);
     }
   };
 
@@ -142,7 +188,7 @@ const DailyScreen = () => {
           renderItem={({ item }) => (
             <SwipeableRow onSwipeRight={() => confirmMine(item)}>
               <View style={[styles.row, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
-                <TouchableOpacity style={styles.rowLeft} onPress={() => setSelected(item)} activeOpacity={0.8}>
+                <TouchableOpacity style={styles.rowLeft} onPress={() => handleRowPress(item)} activeOpacity={0.8}>
                   <BankIcon bank={item.bank} size={36} />
                   <View style={styles.rowMiddle}>
                     <Text style={[styles.merchant, { color: colors.text }]} numberOfLines={1}>{item.merchant_raw || 'Unknown'}</Text>

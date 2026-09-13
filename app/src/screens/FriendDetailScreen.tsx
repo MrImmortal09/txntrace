@@ -20,6 +20,7 @@ const FriendDetailScreen = () => {
   const [selected, setSelected] = useState<TransactionRow | null>(null);
   const [editingEntry, setEditingEntry] = useState<LedgerEntry | null>(null);
   const [addVisible, setAddVisible] = useState(false);
+  const [addMode, setAddMode] = useState<'paid' | 'received'>('paid');
 
   const loadHistory = useCallback(async () => {
     try {
@@ -171,6 +172,27 @@ const FriendDetailScreen = () => {
     }
   };
 
+  const getEntryTitle = (item: LedgerEntry) => {
+    if (item.kind === 'settlement') {
+      return `${contactName} paid you`;
+    }
+    const m = item.merchant?.trim() || '';
+    const mLower = m.toLowerCase();
+    if (mLower.startsWith('paid back')) {
+      return `You paid back ${contactName}`;
+    }
+    if (
+      mLower === `paid ${contactName.toLowerCase()}` ||
+      mLower === 'paid' ||
+      mLower === 'manual payment' ||
+      mLower === 'manual expense' ||
+      (mLower.startsWith('paid ') && mLower.includes(contactName.toLowerCase()))
+    ) {
+      return `You paid ${contactName}`;
+    }
+    return `You paid for ${m || 'a shared expense'}`;
+  };
+
   const hasOpenDebts = entries.some(
     e =>
       (e.kind === 'split' && !e.settled && (e.amountOwed ?? 0) > 0) ||
@@ -198,7 +220,10 @@ const FriendDetailScreen = () => {
             )}
             <TouchableOpacity
               style={[styles.addButton, { backgroundColor: colors.primary }]}
-              onPress={() => setAddVisible(true)}
+              onPress={() => {
+                setAddMode('paid');
+                setAddVisible(true);
+              }}
             >
               <Text style={styles.addButtonText}>+</Text>
             </TouchableOpacity>
@@ -220,6 +245,29 @@ const FriendDetailScreen = () => {
             ? `you owe ₹${Math.abs(balance).toFixed(2)}`
             : 'settled up'}
         </Text>
+
+        <View style={styles.recordActionRow}>
+          <TouchableOpacity
+            style={[styles.recordActionBtn, { backgroundColor: colors.background, borderColor: colors.border }]}
+            onPress={() => {
+              setAddMode('paid');
+              setAddVisible(true);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.recordActionText, { color: colors.danger }]}>💸 I Paid Them</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.recordActionBtn, { backgroundColor: colors.background, borderColor: colors.border }]}
+            onPress={() => {
+              setAddMode('received');
+              setAddVisible(true);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.recordActionText, { color: colors.success }]}>💰 They Paid Me</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {entries.length === 0 ? (
@@ -239,11 +287,7 @@ const FriendDetailScreen = () => {
             >
               <View style={styles.rowInfo}>
                 <Text style={[styles.rowTitle, { color: colors.text }]}>
-                  {item.kind === 'settlement'
-                    ? `${contactName} paid you`
-                    : item.merchant?.toLowerCase().startsWith('paid back')
-                    ? `You paid back ${contactName}`
-                    : `You paid for ${item.merchant || 'a shared expense'}`}
+                  {getEntryTitle(item)}
                 </Text>
                 <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>
                   {formatDateTime(item.date)}
@@ -299,7 +343,9 @@ const FriendDetailScreen = () => {
           loadHistory();
         }}
         onViewTransaction={(txnId) => {
-          openOriginalMessage(txnId);
+          setTimeout(() => {
+            openOriginalMessage(txnId);
+          }, 150);
         }}
       />
 
@@ -309,6 +355,7 @@ const FriendDetailScreen = () => {
         visible={addVisible}
         contactId={contactId}
         contactName={contactName}
+        initialMode={addMode}
         onClose={() => setAddVisible(false)}
         onSaved={() => {
           setAddVisible(false);
@@ -347,6 +394,24 @@ const styles = StyleSheet.create({
   },
   addButtonText: { color: '#fff', fontSize: 20, fontWeight: '600', lineHeight: 22 },
   balanceText: { fontSize: 16, fontWeight: '600', marginTop: 4 },
+  recordActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  recordActionBtn: {
+    flex: 1,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recordActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
   emptyText: { fontSize: 15, textAlign: 'center' },
   listContent: { padding: 16 },
