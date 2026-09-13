@@ -65,7 +65,7 @@ jobs:
           npm version ${{ github.event.inputs.bump_type }} --no-git-tag-version
           NEW_VERSION=$(node -p "require('./package.json').version")
           echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-          git add package.json
+          git add package.json package-lock.json
           git commit -m "chore(release): bump iOS version to v$NEW_VERSION"
           git tag "v$NEW_VERSION"
           git push origin HEAD:${{ github.ref_name }}
@@ -347,6 +347,8 @@ jobs:
             install.html
 
       - name: Create or Update GitHub Release
+        id: release
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.NEW_VERSION }}
@@ -358,6 +360,25 @@ jobs:
             install.html
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fallback Release via GitHub CLI
+        if: steps.release.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ env.NEW_VERSION }}
+        run: |
+          set -e
+          echo "action-gh-release encountered an issue, falling back to GitHub CLI with retry..."
+          for attempt in 1 2 3; do
+            echo "Release attempt $attempt..."
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release edit "$TAG" --title "Release $TAG (iOS Signed)" -F release_notes.md && \
+              gh release upload "$TAG" app/ios/build/export/TxnTrace.ipa manifest.plist install.html --clobber && break
+            else
+              gh release create "$TAG" app/ios/build/export/TxnTrace.ipa manifest.plist install.html --title "Release $TAG (iOS Signed)" -F release_notes.md && break
+            fi
+            sleep 5
+          done
 
       - name: Clean up Keychain
         if: always()
