@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Clipboard, ToastAndroid, Platform } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { db } from '../db/schema';
 import { checkNewMessages } from '../services/smsIngest';
@@ -83,23 +83,60 @@ const LogsScreen = () => {
           {SOURCE_LABEL[item.source] || item.source} · {new Date(item.received_at).toLocaleString()}
         </Text>
 
-        <Text style={styles.label}>Message</Text>
-        <Text style={styles.body}>{item.body}</Text>
+        <Text style={styles.label}>Message (Hold to copy)</Text>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onLongPress={() => {
+            Clipboard.setString(item.body);
+            if (Platform.OS === 'android') {
+              ToastAndroid.show('Message copied to clipboard', ToastAndroid.SHORT);
+            } else {
+              Alert.alert('Copied', 'Message copied to clipboard');
+            }
+          }}
+        >
+          <Text style={styles.body} selectable>{item.body}</Text>
+        </TouchableOpacity>
 
         {isParsed && (
           <>
             <Text style={styles.label}>Parsed</Text>
-            <Text style={styles.parsed}>
-              {item.bank} · {item.type === 'credit' ? '+' : '-'}
-              {item.amount} · {item.merchant}
-            </Text>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onLongPress={() => {
+                const parsedText = `${item.bank} · ${item.type === 'credit' ? '+' : '-'}${item.amount} · ${item.merchant}`;
+                Clipboard.setString(parsedText);
+                if (Platform.OS === 'android') {
+                  ToastAndroid.show('Copied to clipboard', ToastAndroid.SHORT);
+                } else {
+                  Alert.alert('Copied', 'Copied to clipboard');
+                }
+              }}
+            >
+              <Text style={styles.parsed} selectable>
+                {item.bank} · {item.type === 'credit' ? '+' : '-'}
+                {item.amount} · {item.merchant}
+              </Text>
+            </TouchableOpacity>
           </>
         )}
 
         {item.reference && (
           // Two log rows sharing this value are the same real transaction reported
           // twice in different wording — they collapse to one row in Transactions.
-          <Text style={styles.reference}>Ref: {item.reference}</Text>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onLongPress={() => {
+              Clipboard.setString(item.reference!);
+              if (Platform.OS === 'android') {
+                ToastAndroid.show('Reference copied to clipboard', ToastAndroid.SHORT);
+              } else {
+                Alert.alert('Copied', 'Reference copied to clipboard');
+              }
+            }}
+          >
+            <Text style={styles.reference} selectable>Ref: {item.reference}</Text>
+          </TouchableOpacity>
         )}
       </View>
     );
