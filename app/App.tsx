@@ -19,8 +19,16 @@ function MainApp() {
   const [smsError, setSmsError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check for mandatory Google Play updates on Android launch
+    // Check for mandatory Google Play updates on launch and foreground resume
     checkAndEnforceImmediateUpdate();
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        checkAndEnforceImmediateUpdate();
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -57,7 +65,6 @@ function MainApp() {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
         runCheck();
-        checkAndEnforceImmediateUpdate();
       }
     });
     return () => { subscription.remove(); };

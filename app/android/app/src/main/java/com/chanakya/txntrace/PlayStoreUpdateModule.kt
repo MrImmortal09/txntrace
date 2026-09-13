@@ -55,10 +55,22 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
     override fun invalidate() {
         super.invalidate()
         try {
+            pendingUpdatePromise?.reject("MODULE_INVALIDATED", "PlayStoreUpdateModule was invalidated.")
+            pendingUpdatePromise = null
             appUpdateManager.unregisterListener(installStateUpdatedListener)
             reactContext.removeActivityEventListener(this)
         } catch (ignored: Exception) {
         }
+    }
+
+    @ReactMethod
+    fun addListener(eventName: String) {
+        // Required for RN built-in Event Emitter Calls.
+    }
+
+    @ReactMethod
+    fun removeListeners(count: Int) {
+        // Required for RN built-in Event Emitter Calls.
     }
 
     private fun sendEvent(eventName: String, params: WritableMap?) {
@@ -107,6 +119,11 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun startImmediateUpdate(promise: Promise) {
+        if (pendingUpdatePromise != null) {
+            promise.reject("ALREADY_IN_PROGRESS", "An update flow is already in progress.")
+            return
+        }
+
         val activity = currentActivity
         if (activity == null) {
             promise.reject("NO_ACTIVITY", "Current activity is null, cannot start immediate update.")
@@ -155,6 +172,11 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun startFlexibleUpdate(promise: Promise) {
+        if (pendingUpdatePromise != null) {
+            promise.reject("ALREADY_IN_PROGRESS", "An update flow is already in progress.")
+            return
+        }
+
         val activity = currentActivity
         if (activity == null) {
             promise.reject("NO_ACTIVITY", "Current activity is null, cannot start flexible update.")
@@ -165,7 +187,9 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
             appUpdateManager.appUpdateInfo
                 .addOnSuccessListener { info: AppUpdateInfo ->
                     val isAvailable =
-                        info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
+                        info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE ||
+                            info.updateAvailability() ==
+                                UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
 
                     if (isAvailable && info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)) {
                         pendingUpdatePromise = promise
