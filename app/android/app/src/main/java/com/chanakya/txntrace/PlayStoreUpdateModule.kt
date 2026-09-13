@@ -33,9 +33,6 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
         AppUpdateManagerFactory.create(reactContext)
     }
 
-    private val currentActivity: Activity?
-        get() = reactContext.currentActivity
-
     @Volatile
     private var pendingUpdatePromise: Promise? = null
 
