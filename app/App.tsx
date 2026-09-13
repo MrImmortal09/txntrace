@@ -9,6 +9,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { TabNavigator } from './src/screens/TabNavigator';
 import { setupDatabase } from './src/db/schema';
 import { checkNewMessages } from './src/services/smsIngest';
+import { checkAndEnforceImmediateUpdate } from './src/services/playStoreUpdate';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 
@@ -16,6 +17,11 @@ function MainApp() {
   const { isDark, colors } = useTheme();
   const [dbInitialized, setDbInitialized] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Check for mandatory Google Play updates on Android launch
+    checkAndEnforceImmediateUpdate();
+  }, []);
 
   useEffect(() => {
     const requestPermissions = async () => {
@@ -51,6 +57,7 @@ function MainApp() {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
         runCheck();
+        checkAndEnforceImmediateUpdate();
       }
     });
     return () => { subscription.remove(); };

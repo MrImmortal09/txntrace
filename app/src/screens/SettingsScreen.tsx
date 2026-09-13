@@ -18,6 +18,7 @@ import {
   getAuthToken,
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
+import { checkAndEnforceImmediateUpdate } from '../services/playStoreUpdate';
 import { useTheme } from '../theme/ThemeProvider';
 import { OTPLoginModal } from '../components/OTPLoginModal';
 
@@ -425,6 +426,19 @@ const SettingsScreen = () => {
           }
         }}
       />
+
+      {Platform.OS === 'android' && (
+        <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>App Updates</Text>
+          <Text style={[styles.hint, { color: colors.textSecondary }]}>Google Play Store In-App Updates</Text>
+          <TouchableOpacity
+            style={[styles.button, styles.buttonSecondary, { borderColor: colors.border }]}
+            onPress={() => checkAndEnforceImmediateUpdate({ manual: true })}
+          >
+            <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Check for Play Store Updates</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Diagnostics</Text>
