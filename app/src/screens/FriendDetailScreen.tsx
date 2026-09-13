@@ -172,6 +172,27 @@ const FriendDetailScreen = () => {
     }
   };
 
+  const getEntryTitle = (item: LedgerEntry) => {
+    if (item.kind === 'settlement') {
+      return `${contactName} paid you`;
+    }
+    const m = item.merchant?.trim() || '';
+    const mLower = m.toLowerCase();
+    if (mLower.startsWith('paid back')) {
+      return `You paid back ${contactName}`;
+    }
+    if (
+      mLower === `paid ${contactName.toLowerCase()}` ||
+      mLower === 'paid' ||
+      mLower === 'manual payment' ||
+      mLower === 'manual expense' ||
+      (mLower.startsWith('paid ') && mLower.includes(contactName.toLowerCase()))
+    ) {
+      return `You paid ${contactName}`;
+    }
+    return `You paid for ${m || 'a shared expense'}`;
+  };
+
   const hasOpenDebts = entries.some(
     e =>
       (e.kind === 'split' && !e.settled && (e.amountOwed ?? 0) > 0) ||
@@ -266,11 +287,7 @@ const FriendDetailScreen = () => {
             >
               <View style={styles.rowInfo}>
                 <Text style={[styles.rowTitle, { color: colors.text }]}>
-                  {item.kind === 'settlement'
-                    ? `${contactName} paid you`
-                    : item.merchant?.toLowerCase().startsWith('paid back')
-                    ? `You paid back ${contactName}`
-                    : `You paid for ${item.merchant || 'a shared expense'}`}
+                  {getEntryTitle(item)}
                 </Text>
                 <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>
                   {formatDateTime(item.date)}
@@ -326,7 +343,9 @@ const FriendDetailScreen = () => {
           loadHistory();
         }}
         onViewTransaction={(txnId) => {
-          openOriginalMessage(txnId);
+          setTimeout(() => {
+            openOriginalMessage(txnId);
+          }, 150);
         }}
       />
 

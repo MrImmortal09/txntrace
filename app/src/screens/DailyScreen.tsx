@@ -29,6 +29,7 @@ const DailyScreen = () => {
   const [pasteModalVisible, setPasteModalVisible] = useState(false);
   const lastTapRef = useRef<{ [id: string]: number }>({});
   const singleTapTimerRef = useRef<{ [id: string]: any }>({});
+  const ignoringTapsRef = useRef<{ [id: string]: number }>({});
 
   useEffect(() => {
     return () => {
@@ -59,6 +60,11 @@ const DailyScreen = () => {
   );
 
   const confirmMine = async (txn: Transaction) => {
+    if (singleTapTimerRef.current[txn.id]) {
+      clearTimeout(singleTapTimerRef.current[txn.id]);
+      delete singleTapTimerRef.current[txn.id];
+    }
+    delete lastTapRef.current[txn.id];
     setTxns(prev => prev.filter(t => t.id !== txn.id));
     try {
       await markTransactionAsMine(txn.id);
@@ -70,6 +76,10 @@ const DailyScreen = () => {
 
   const handleRowPress = (txn: Transaction) => {
     const now = Date.now();
+    if (now < (ignoringTapsRef.current[txn.id] || 0)) {
+      return;
+    }
+
     const lastTap = lastTapRef.current[txn.id] || 0;
     const DOUBLE_TAP_DELAY = 280;
 
@@ -80,6 +90,7 @@ const DailyScreen = () => {
         delete singleTapTimerRef.current[txn.id];
       }
       delete lastTapRef.current[txn.id];
+      ignoringTapsRef.current[txn.id] = now + 1000;
       confirmMine(txn);
     } else {
       // First tap: delay detail modal open until double tap window elapses
@@ -88,9 +99,9 @@ const DailyScreen = () => {
         clearTimeout(singleTapTimerRef.current[txn.id]);
       }
       singleTapTimerRef.current[txn.id] = setTimeout(() => {
-        setSelected(txn);
         delete singleTapTimerRef.current[txn.id];
         delete lastTapRef.current[txn.id];
+        setSelected(txn);
       }, DOUBLE_TAP_DELAY);
     }
   };

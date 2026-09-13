@@ -154,10 +154,33 @@ export const EditDebtModal = ({
   const handleViewOriginal = () => {
     if (entry.transactionId && onViewTransaction) {
       onClose();
-      onViewTransaction(entry.transactionId);
+      setTimeout(() => {
+        onViewTransaction(entry.transactionId!);
+      }, 150);
     } else {
       Alert.alert('No Transaction', 'No original transaction linked to this entry.');
     }
+  };
+
+  const getEntryTitle = () => {
+    if (!isSplit) {
+      return `${contactName} paid you`;
+    }
+    const m = entry.merchant?.trim() || '';
+    const mLower = m.toLowerCase();
+    if (mLower.startsWith('paid back')) {
+      return `You paid back ${contactName}`;
+    }
+    if (
+      mLower === `paid ${contactName.toLowerCase()}` ||
+      mLower === 'paid' ||
+      mLower === 'manual payment' ||
+      mLower === 'manual expense' ||
+      (mLower.startsWith('paid ') && mLower.includes(contactName.toLowerCase()))
+    ) {
+      return `You paid ${contactName}`;
+    }
+    return `You paid for ${m || 'Shared Expense'}`;
   };
 
   return (
@@ -187,11 +210,7 @@ export const EditDebtModal = ({
               >
                 <View style={styles.merchantHeaderRow}>
                   <Text style={[styles.merchantName, { color: colors.text, flex: 1 }]}>
-                    {isSplit
-                      ? entry.merchant?.toLowerCase().startsWith('paid back')
-                        ? `You paid back ${contactName}`
-                        : `You paid for ${entry.merchant || 'Shared Expense'}`
-                      : `${contactName} paid you`}
+                    {getEntryTitle()}
                   </Text>
                   {entry.transactionId && onViewTransaction ? (
                     <Text style={[styles.viewOriginalLinkText, { color: colors.primary }]}>

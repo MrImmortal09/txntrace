@@ -67,6 +67,8 @@ const ReviewScreen = () => {
   const [selectedContacts, setSelectedContacts] = useState<SplitContact[]>([]);
 
   const pan = useRef(new Animated.ValueXY()).current;
+  const isAdvancingRef = useRef(false);
+  const ignoringCardTapUntilRef = useRef<number>(0);
   const lastCardTapRef = useRef<number>(0);
   const cardTapTimerRef = useRef<any>(null);
 
@@ -77,7 +79,10 @@ const ReviewScreen = () => {
   }, []);
 
   const handleCardPress = () => {
+    if (isAdvancingRef.current) return;
     const now = Date.now();
+    if (now < ignoringCardTapUntilRef.current) return;
+
     const DOUBLE_TAP_DELAY = 280;
     if (now - lastCardTapRef.current < DOUBLE_TAP_DELAY) {
       if (cardTapTimerRef.current) {
@@ -85,6 +90,7 @@ const ReviewScreen = () => {
         cardTapTimerRef.current = null;
       }
       lastCardTapRef.current = 0;
+      ignoringCardTapUntilRef.current = now + 800;
       advance(1);
     } else {
       lastCardTapRef.current = now;
@@ -146,6 +152,8 @@ const ReviewScreen = () => {
   // that form. A single plain-PanResponder card, same pattern as
   // SwipeableRow, doesn't have that problem since it's sized by normal flow.
   const advance = (direction: 1 | -1 = 1) => {
+    if (isAdvancingRef.current) return;
+    isAdvancingRef.current = true;
     Animated.timing(pan, {
       toValue: { x: direction * 500, y: 0 },
       duration: 200,
@@ -154,6 +162,7 @@ const ReviewScreen = () => {
       const index = currentIndex;
       handleReview(index);
       handleCardChange(index + 1);
+      isAdvancingRef.current = false;
     });
   };
 
@@ -276,7 +285,7 @@ const ReviewScreen = () => {
 
   const currentTxn = txns[currentIndex];
 
-  if (txns.length === 0) {
+  if (txns.length === 0 || currentIndex >= txns.length) {
     return (
       <View style={[styles.center, { backgroundColor: colors.background }]}>
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>All caught up! No transactions to review.</Text>
@@ -325,6 +334,7 @@ const ReviewScreen = () => {
                   style={[styles.cardLocation, { backgroundColor: colors.background, borderColor: colors.border }]}
                   onPress={(e) => {
                     e.stopPropagation?.();
+                    ignoringCardTapUntilRef.current = Date.now() + 600;
                     openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude);
                   }}
                   activeOpacity={0.7}

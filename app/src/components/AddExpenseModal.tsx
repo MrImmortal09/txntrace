@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { db } from '../db/schema';
 import { createSplit, applySettlement } from '../services/settlements';
 import { useTheme } from '../theme/ThemeProvider';
@@ -33,7 +33,7 @@ const AddExpenseModal = ({ visible, contactId, contactName, initialMode = 'paid'
   }, [visible, initialMode]);
 
   const reset = () => {
-    setMode('paid');
+    setMode(initialMode);
     setAmount('');
     setDescription('');
     onClose();
@@ -41,12 +41,16 @@ const AddExpenseModal = ({ visible, contactId, contactName, initialMode = 'paid'
 
   const save = async () => {
     const value = Number(amount);
-    if (!value || value <= 0) {
+    if (!value || isNaN(value) || value <= 0) {
       Alert.alert('Enter an amount', 'The amount must be a positive number.');
       return;
     }
-    if (!contactId || !contactName) return;
+    if (!contactId || !contactName) {
+      Alert.alert('Error', 'Contact information is missing.');
+      return;
+    }
 
+    const roundedValue = Number(value.toFixed(2));
     setSaving(true);
     try {
       const now = new Date().toISOString();
@@ -58,25 +62,25 @@ const AddExpenseModal = ({ visible, contactId, contactName, initialMode = 'paid'
         await db.execute(
           `INSERT INTO transactions (id, bank, amount, type, merchant_raw, date, source, reviewed, created_at, updated_at)
            VALUES (?, NULL, ?, 'credit', ?, ?, 'manual', 1, ?, ?)`,
-          [txnId, value, description.trim() || defaultDesc, now, now, now]
+          [txnId, roundedValue, description.trim() || defaultDesc, now, now, now]
         );
-        await applySettlement(contactId, contactName, value, txnId);
+        await applySettlement(contactId, contactName, roundedValue, txnId);
       } else {
         // I paid them: debit transaction + create split
         const defaultDesc = `Paid ${contactName}`;
         await db.execute(
           `INSERT INTO transactions (id, bank, amount, type, merchant_raw, date, source, reviewed, created_at, updated_at)
            VALUES (?, NULL, ?, 'debit', ?, ?, 'manual', 1, ?, ?)`,
-          [txnId, value, description.trim() || defaultDesc, now, now, now]
+          [txnId, roundedValue, description.trim() || defaultDesc, now, now, now]
         );
-        await createSplit(txnId, contactId, contactName, value);
+        await createSplit(txnId, contactId, contactName, roundedValue);
       }
 
       setAmount('');
       setDescription('');
       onSaved();
     } catch (error: any) {
-      Alert.alert('Failed to save', error.message || 'Something went wrong.');
+      Alert.alert('Failed to save', error?.message || 'Something went wrong.');
     } finally {
       setSaving(false);
     }
@@ -84,7 +88,10 @@ const AddExpenseModal = ({ visible, contactId, contactName, initialMode = 'paid'
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={reset}>
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={reset} />
         <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
           <Text style={[styles.title, { color: colors.text }]}>
@@ -166,7 +173,7 @@ const AddExpenseModal = ({ visible, contactId, contactName, initialMode = 'paid'
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
