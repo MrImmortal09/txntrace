@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       bump_type:
-        description: 'Version bump type (patch, minor, major)'
+        description: 'Version bump type (none, patch, minor, major)'
         required: true
         default: 'patch'
         type: choice
         options:
+        - none
         - patch
         - minor
         - major
@@ -48,12 +49,14 @@ jobs:
         run: npm ci
 
       - name: Configure Git
+        if: ${{ github.event.inputs.bump_type != '' && github.event.inputs.bump_type != 'none' }}
         run: |
           set -e
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Bump Version
+        if: ${{ github.event.inputs.bump_type != '' && github.event.inputs.bump_type != 'none' }}
         working-directory: ./app
         id: version_bump
         run: |
@@ -65,11 +68,19 @@ jobs:
           echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
           
           # Commit the changes
-          git add package.json package-lock.json 2>/dev/null || git add package.json
+          git add package.json package-lock.json
           git commit -m "chore(release): bump version to v$NEW_VERSION"
           git tag "v$NEW_VERSION"
           git push origin HEAD:${{ github.ref_name }}
           git push origin --tags
+
+      - name: Determine Current Version
+        run: |
+          VERSION=$(node -p "require('./app/package.json').version")
+          if [ -z "$NEW_VERSION" ]; then
+            echo "NEW_VERSION=$VERSION" >> $GITHUB_ENV
+          fi
+          echo "Building version: ${NEW_VERSION:-$VERSION}"
 
       - name: Setup Java Jdk
         uses: actions/setup-java@v4
@@ -93,6 +104,9 @@ jobs:
 
       - name: Build Android APK and AAB
         working-directory: ./app/android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: ${{ env.NEW_VERSION }}
         run: |
           set -e
           chmod +x ./gradlew
@@ -111,6 +125,8 @@ jobs:
           echo -e "Changes in this release:\n\n$COMMITS" > release_notes.md
 
       - name: Create GitHub Release
+        id: release
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.NEW_VERSION }}
@@ -122,7 +138,27 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Fallback Release via GitHub CLI
+        if: steps.release.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ env.NEW_VERSION }}
+        run: |
+          set -e
+          echo "action-gh-release encountered an issue, falling back to GitHub CLI with retry..."
+          for attempt in 1 2 3; do
+            echo "Release attempt $attempt..."
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release edit "$TAG" -F release_notes.md && \
+              gh release upload "$TAG" app/android/app/build/outputs/apk/release/app-release.apk app/android/app/build/outputs/bundle/release/app-release.aab --clobber && break
+            else
+              gh release create "$TAG" app/android/app/build/outputs/apk/release/app-release.apk app/android/app/build/outputs/bundle/release/app-release.aab --title "Release $TAG" -F release_notes.md && break
+            fi
+            sleep 5
+          done
+
       - name: Upload to Google Play Store
+        if: ${{ secrets.PLAY_STORE_CREDENTIALS != '' }}
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_CREDENTIALS }}
