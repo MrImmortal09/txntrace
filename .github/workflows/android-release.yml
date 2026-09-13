@@ -107,14 +107,17 @@ jobs:
         env:
           VERSION_CODE: ${{ github.run_number }}
           VERSION_NAME: ${{ env.NEW_VERSION }}
+          STORE_PASSWORD: ${{ secrets.MYAPP_UPLOAD_STORE_PASSWORD || secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.MYAPP_UPLOAD_KEY_ALIAS || secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.MYAPP_UPLOAD_KEY_PASSWORD || secrets.KEY_PASSWORD }}
         run: |
           set -e
           chmod +x ./gradlew
           ./gradlew assembleRelease bundleRelease \
             -PMYAPP_UPLOAD_STORE_FILE=txntrace-release.keystore \
-            -PMYAPP_UPLOAD_STORE_PASSWORD='${{ secrets.KEYSTORE_PASSWORD }}' \
-            -PMYAPP_UPLOAD_KEY_ALIAS='${{ secrets.KEY_ALIAS }}' \
-            -PMYAPP_UPLOAD_KEY_PASSWORD='${{ secrets.KEY_PASSWORD }}'
+            -PMYAPP_UPLOAD_STORE_PASSWORD="$STORE_PASSWORD" \
+            -PMYAPP_UPLOAD_KEY_ALIAS="$KEY_ALIAS" \
+            -PMYAPP_UPLOAD_KEY_PASSWORD="$KEY_PASSWORD"
 
       - name: Extract Release Notes
         id: changelog
