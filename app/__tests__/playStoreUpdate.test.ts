@@ -5,8 +5,10 @@ import {
   completeUpdate,
   checkAndEnforceImmediateUpdate,
   promptMandatoryUpdateFallback,
+  promptUpdateDownloaded,
   openPlayStore,
   _resetInternalState,
+  InstallStatus,
   PLAY_STORE_MARKET_URL,
   PLAY_STORE_WEB_URL,
 } from '../src/services/playStoreUpdate';
@@ -334,6 +336,37 @@ describe('playStoreUpdate service', () => {
       expect(mockModule.checkForUpdate).toHaveBeenCalledTimes(1);
       expect(mockModule.startImmediateUpdate).toHaveBeenCalledTimes(1);
     });
+
+    test('prompts restart when a flexible update was already downloaded', async () => {
+      mockModule.checkForUpdate.mockResolvedValue({
+        updateAvailable: false,
+        developerTriggeredUpdateInProgress: false,
+        availableVersionCode: 105,
+        installStatus: InstallStatus.DOWNLOADED,
+        immediateAllowed: false,
+        flexibleAllowed: false,
+        updatePriority: 0,
+        clientVersionStalenessDays: 0,
+      });
+
+      const result = await checkAndEnforceImmediateUpdate();
+      expect(result).toBe(true);
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Update Downloaded',
+        expect.stringContaining('Restart the app now to complete the update'),
+        expect.any(Array),
+        { cancelable: false }
+      );
+    });
+
+    test('does not initiate check if fallback alert is currently visible', async () => {
+      promptMandatoryUpdateFallback();
+      expect(Alert.alert).toHaveBeenCalledTimes(1);
+
+      const result = await checkAndEnforceImmediateUpdate();
+      expect(result).toBe(false);
+      expect(mockModule.checkForUpdate).not.toHaveBeenCalled();
+    });
   });
 
   describe('promptMandatoryUpdateFallback', () => {
@@ -365,6 +398,34 @@ describe('playStoreUpdate service', () => {
       promptMandatoryUpdateFallback();
       promptMandatoryUpdateFallback();
       promptMandatoryUpdateFallback();
+
+      expect(Alert.alert).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('promptUpdateDownloaded', () => {
+    test('shows non-cancelable alert and completes update on Restart Now', () => {
+      mockModule.completeUpdate.mockResolvedValue(true);
+      promptUpdateDownloaded();
+
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Update Downloaded',
+        expect.stringContaining('Restart the app now to complete the update'),
+        [expect.objectContaining({ text: 'Restart Now' })],
+        { cancelable: false }
+      );
+
+      const alertCall = (Alert.alert as jest.Mock).mock.calls[0];
+      const restartAction = alertCall[2].find((b: any) => b.text === 'Restart Now');
+      restartAction.onPress();
+
+      expect(mockModule.completeUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    test('prevents multiple stacked downloaded dialogs when called repeatedly', () => {
+      promptUpdateDownloaded();
+      promptUpdateDownloaded();
+      promptUpdateDownloaded();
 
       expect(Alert.alert).toHaveBeenCalledTimes(1);
     });

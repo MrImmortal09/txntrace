@@ -33,6 +33,7 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
         AppUpdateManagerFactory.create(reactContext)
     }
 
+    @Volatile
     private var pendingUpdatePromise: Promise? = null
 
     private val installStateUpdatedListener = InstallStateUpdatedListener { state: InstallState ->
@@ -55,8 +56,10 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
     override fun invalidate() {
         super.invalidate()
         try {
-            pendingUpdatePromise?.reject("MODULE_INVALIDATED", "PlayStoreUpdateModule was invalidated.")
-            pendingUpdatePromise = null
+            synchronized(this) {
+                pendingUpdatePromise?.reject("MODULE_INVALIDATED", "PlayStoreUpdateModule was invalidated.")
+                pendingUpdatePromise = null
+            }
             appUpdateManager.unregisterListener(installStateUpdatedListener)
             reactContext.removeActivityEventListener(this)
         } catch (ignored: Exception) {
@@ -96,6 +99,7 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
                         putBoolean("updateAvailable", isAvailable)
                         putBoolean("developerTriggeredUpdateInProgress", inProgress)
                         putInt("availableVersionCode", info.availableVersionCode())
+                        putInt("installStatus", info.installStatus())
                         putBoolean(
                             "immediateAllowed",
                             info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
@@ -110,52 +114,72 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
                     promise.resolve(result)
                 }
                 .addOnFailureListener { e ->
-                    promise.reject("CHECK_UPDATE_FAILED", e.message, e)
+                    promise.reject("CHECK_UPDATE_FAILED", e.message ?: "Failed to check for update", e)
                 }
         } catch (e: Exception) {
-            promise.reject("CHECK_UPDATE_ERROR", e.message, e)
+            promise.reject("CHECK_UPDATE_ERROR", e.message ?: "Unexpected error checking for update", e)
         }
     }
 
     @ReactMethod
     fun startImmediateUpdate(promise: Promise) {
-        if (pendingUpdatePromise != null) {
-            promise.reject("ALREADY_IN_PROGRESS", "An update flow is already in progress.")
-            return
+        synchronized(this) {
+            if (pendingUpdatePromise != null) {
+                promise.reject("ALREADY_IN_PROGRESS", "An update flow is already in progress.")
+                return
+            }
+            pendingUpdatePromise = promise
         }
 
-        val activity = currentActivity
-        if (activity == null) {
-            promise.reject("NO_ACTIVITY", "Current activity is null, cannot start immediate update.")
+        val initialActivity = currentActivity
+        if (initialActivity == null || initialActivity.isFinishing || initialActivity.isDestroyed) {
+            synchronized(this) { pendingUpdatePromise = null }
+            promise.reject("NO_ACTIVITY", "Current activity is invalid or finishing.")
             return
         }
 
         try {
             appUpdateManager.appUpdateInfo
                 .addOnSuccessListener { info: AppUpdateInfo ->
+                    val activity = currentActivity
+                    if (activity == null || activity.isFinishing || activity.isDestroyed) {
+                        synchronized(this) { pendingUpdatePromise = null }
+                        promise.reject("NO_ACTIVITY", "Activity is no longer active.")
+                        return@addOnSuccessListener
+                    }
+
                     val isAvailable =
                         info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE ||
                             info.updateAvailability() ==
                                 UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
 
                     if (isAvailable && info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
-                        pendingUpdatePromise = promise
                         val options = AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
-                        val started =
-                            appUpdateManager.startUpdateFlowForResult(
-                                info,
-                                activity,
-                                options,
-                                REQUEST_CODE_IMMEDIATE_UPDATE
-                            )
-                        if (!started) {
-                            pendingUpdatePromise = null
+                        try {
+                            val started =
+                                appUpdateManager.startUpdateFlowForResult(
+                                    info,
+                                    activity,
+                                    options,
+                                    REQUEST_CODE_IMMEDIATE_UPDATE
+                                )
+                            if (!started) {
+                                synchronized(this) { pendingUpdatePromise = null }
+                                promise.reject(
+                                    "UPDATE_FLOW_NOT_STARTED",
+                                    "Failed to start immediate update flow."
+                                )
+                            }
+                        } catch (flowEx: Exception) {
+                            synchronized(this) { pendingUpdatePromise = null }
                             promise.reject(
-                                "UPDATE_FLOW_NOT_STARTED",
-                                "Failed to start immediate update flow."
+                                "UPDATE_FLOW_ERROR",
+                                flowEx.message ?: "Failed to start immediate update flow.",
+                                flowEx
                             )
                         }
                     } else {
+                        synchronized(this) { pendingUpdatePromise = null }
                         promise.reject(
                             "IMMEDIATE_UPDATE_NOT_ALLOWED",
                             "Immediate update is not allowed or not available."
@@ -163,52 +187,74 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
                     }
                 }
                 .addOnFailureListener { e ->
-                    promise.reject("APP_UPDATE_INFO_FAILED", e.message, e)
+                    synchronized(this) { pendingUpdatePromise = null }
+                    promise.reject("APP_UPDATE_INFO_FAILED", e.message ?: "Failed to retrieve update info", e)
                 }
         } catch (e: Exception) {
-            promise.reject("START_UPDATE_ERROR", e.message, e)
+            synchronized(this) { pendingUpdatePromise = null }
+            promise.reject("START_UPDATE_ERROR", e.message ?: "Unexpected error starting update flow", e)
         }
     }
 
     @ReactMethod
     fun startFlexibleUpdate(promise: Promise) {
-        if (pendingUpdatePromise != null) {
-            promise.reject("ALREADY_IN_PROGRESS", "An update flow is already in progress.")
-            return
+        synchronized(this) {
+            if (pendingUpdatePromise != null) {
+                promise.reject("ALREADY_IN_PROGRESS", "An update flow is already in progress.")
+                return
+            }
+            pendingUpdatePromise = promise
         }
 
-        val activity = currentActivity
-        if (activity == null) {
-            promise.reject("NO_ACTIVITY", "Current activity is null, cannot start flexible update.")
+        val initialActivity = currentActivity
+        if (initialActivity == null || initialActivity.isFinishing || initialActivity.isDestroyed) {
+            synchronized(this) { pendingUpdatePromise = null }
+            promise.reject("NO_ACTIVITY", "Current activity is invalid or finishing.")
             return
         }
 
         try {
             appUpdateManager.appUpdateInfo
                 .addOnSuccessListener { info: AppUpdateInfo ->
+                    val activity = currentActivity
+                    if (activity == null || activity.isFinishing || activity.isDestroyed) {
+                        synchronized(this) { pendingUpdatePromise = null }
+                        promise.reject("NO_ACTIVITY", "Activity is no longer active.")
+                        return@addOnSuccessListener
+                    }
+
                     val isAvailable =
                         info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE ||
                             info.updateAvailability() ==
                                 UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
 
                     if (isAvailable && info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)) {
-                        pendingUpdatePromise = promise
                         val options = AppUpdateOptions.newBuilder(AppUpdateType.FLEXIBLE).build()
-                        val started =
-                            appUpdateManager.startUpdateFlowForResult(
-                                info,
-                                activity,
-                                options,
-                                REQUEST_CODE_FLEXIBLE_UPDATE
-                            )
-                        if (!started) {
-                            pendingUpdatePromise = null
+                        try {
+                            val started =
+                                appUpdateManager.startUpdateFlowForResult(
+                                    info,
+                                    activity,
+                                    options,
+                                    REQUEST_CODE_FLEXIBLE_UPDATE
+                                )
+                            if (!started) {
+                                synchronized(this) { pendingUpdatePromise = null }
+                                promise.reject(
+                                    "UPDATE_FLOW_NOT_STARTED",
+                                    "Failed to start flexible update flow."
+                                )
+                            }
+                        } catch (flowEx: Exception) {
+                            synchronized(this) { pendingUpdatePromise = null }
                             promise.reject(
-                                "UPDATE_FLOW_NOT_STARTED",
-                                "Failed to start flexible update flow."
+                                "UPDATE_FLOW_ERROR",
+                                flowEx.message ?: "Failed to start flexible update flow.",
+                                flowEx
                             )
                         }
                     } else {
+                        synchronized(this) { pendingUpdatePromise = null }
                         promise.reject(
                             "FLEXIBLE_UPDATE_NOT_ALLOWED",
                             "Flexible update is not allowed or not available."
@@ -216,10 +262,12 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
                     }
                 }
                 .addOnFailureListener { e ->
-                    promise.reject("APP_UPDATE_INFO_FAILED", e.message, e)
+                    synchronized(this) { pendingUpdatePromise = null }
+                    promise.reject("APP_UPDATE_INFO_FAILED", e.message ?: "Failed to retrieve update info", e)
                 }
         } catch (e: Exception) {
-            promise.reject("START_UPDATE_ERROR", e.message, e)
+            synchronized(this) { pendingUpdatePromise = null }
+            promise.reject("START_UPDATE_ERROR", e.message ?: "Unexpected error starting update flow", e)
         }
     }
 
@@ -231,10 +279,10 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
                     promise.resolve(true)
                 }
                 .addOnFailureListener { e ->
-                    promise.reject("COMPLETE_UPDATE_FAILED", e.message, e)
+                    promise.reject("COMPLETE_UPDATE_FAILED", e.message ?: "Failed to complete update", e)
                 }
         } catch (e: Exception) {
-            promise.reject("COMPLETE_UPDATE_ERROR", e.message, e)
+            promise.reject("COMPLETE_UPDATE_ERROR", e.message ?: "Unexpected error completing update", e)
         }
     }
 
@@ -245,8 +293,11 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
         data: Intent?
     ) {
         if (requestCode == REQUEST_CODE_IMMEDIATE_UPDATE || requestCode == REQUEST_CODE_FLEXIBLE_UPDATE) {
-            val p = pendingUpdatePromise
-            pendingUpdatePromise = null
+            val p = synchronized(this) {
+                val temp = pendingUpdatePromise
+                pendingUpdatePromise = null
+                temp
+            }
 
             val isImmediate = requestCode == REQUEST_CODE_IMMEDIATE_UPDATE
             val eventName = if (isImmediate) "onImmediateUpdateResult" else "onFlexibleUpdateResult"

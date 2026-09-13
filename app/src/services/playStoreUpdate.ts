@@ -11,6 +11,7 @@ export interface AppUpdateInfo {
   updateAvailable: boolean;
   developerTriggeredUpdateInProgress: boolean;
   availableVersionCode: number;
+  installStatus?: number;
   immediateAllowed: boolean;
   flexibleAllowed: boolean;
   updatePriority: number;
@@ -39,8 +40,35 @@ export const PLAY_STORE_MARKET_URL = 'market://details?id=com.chanakya.txntrace'
 export const PLAY_STORE_WEB_URL = 'https://play.google.com/store/apps/details?id=com.chanakya.txntrace';
 
 let isFallbackAlertVisible = false;
+let isDownloadedAlertVisible = false;
 let activeCheckPromise: Promise<boolean> | null = null;
 let isUpdateFlowActive = false;
+
+/**
+ * Prompts the user to restart the app when a flexible update has completed downloading.
+ * Guarded to prevent duplicate dialogs.
+ */
+export const promptUpdateDownloaded = () => {
+  if (isDownloadedAlertVisible) {
+    return;
+  }
+  isDownloadedAlertVisible = true;
+
+  Alert.alert(
+    'Update Downloaded',
+    'An update has been downloaded. Restart the app now to complete the update.',
+    [
+      {
+        text: 'Restart Now',
+        onPress: () => {
+          isDownloadedAlertVisible = false;
+          completeUpdate();
+        },
+      },
+    ],
+    { cancelable: false }
+  );
+};
 
 // Set up automatic listener for flexible update completion
 if (updateEventEmitter) {
@@ -48,19 +76,7 @@ if (updateEventEmitter) {
     updateEventEmitter.addListener('onInstallStateChanged', (rawEvent: any) => {
       const event = rawEvent as InstallStateEvent;
       if (event && event.installStatus === InstallStatus.DOWNLOADED) {
-        Alert.alert(
-          'Update Downloaded',
-          'An update has been downloaded. Restart the app now to complete the update.',
-          [
-            {
-              text: 'Restart Now',
-              onPress: () => {
-                completeUpdate();
-              },
-            },
-          ],
-          { cancelable: false }
-        );
+        promptUpdateDownloaded();
       }
     });
   } catch (err) {
@@ -190,6 +206,11 @@ export const checkAndEnforceImmediateUpdate = async (options?: { manual?: boolea
     return false;
   }
 
+  // If the mandatory fallback alert is already visible, do not trigger another check
+  if (isFallbackAlertVisible) {
+    return false;
+  }
+
   // If an update UI flow is already active on screen, do not initiate another check
   if (isUpdateFlowActive) {
     return true;
@@ -209,6 +230,12 @@ export const checkAndEnforceImmediateUpdate = async (options?: { manual?: boolea
           Alert.alert('Check Failed', 'Could not check for updates. Please check your internet connection.');
         }
         return false;
+      }
+
+      // If a flexible update has already completed downloading, prompt restart immediately
+      if (info.installStatus === InstallStatus.DOWNLOADED) {
+        promptUpdateDownloaded();
+        return true;
       }
 
       const isUpdateNeeded = info.updateAvailable || info.developerTriggeredUpdateInProgress;
@@ -300,6 +327,7 @@ export const promptMandatoryUpdateFallback = () => {
  */
 export const _resetInternalState = () => {
   isFallbackAlertVisible = false;
+  isDownloadedAlertVisible = false;
   activeCheckPromise = null;
   isUpdateFlowActive = false;
 };
