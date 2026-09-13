@@ -33,6 +33,9 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
         AppUpdateManagerFactory.create(reactContext)
     }
 
+    private val currentActivity: Activity?
+        get() = reactContext.currentActivity
+
     @Volatile
     private var pendingUpdatePromise: Promise? = null
 
@@ -131,7 +134,7 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
             pendingUpdatePromise = promise
         }
 
-        val initialActivity = currentActivity
+        val initialActivity = reactContext.currentActivity
         if (initialActivity == null || initialActivity.isFinishing || initialActivity.isDestroyed) {
             synchronized(this) { pendingUpdatePromise = null }
             promise.reject("NO_ACTIVITY", "Current activity is invalid or finishing.")
@@ -141,7 +144,7 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
         try {
             appUpdateManager.appUpdateInfo
                 .addOnSuccessListener { info: AppUpdateInfo ->
-                    val activity = currentActivity
+                    val activity = reactContext.currentActivity
                     if (activity == null || activity.isFinishing || activity.isDestroyed) {
                         synchronized(this) { pendingUpdatePromise = null }
                         promise.reject("NO_ACTIVITY", "Activity is no longer active.")
@@ -206,7 +209,7 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
             pendingUpdatePromise = promise
         }
 
-        val initialActivity = currentActivity
+        val initialActivity = reactContext.currentActivity
         if (initialActivity == null || initialActivity.isFinishing || initialActivity.isDestroyed) {
             synchronized(this) { pendingUpdatePromise = null }
             promise.reject("NO_ACTIVITY", "Current activity is invalid or finishing.")
@@ -216,7 +219,7 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
         try {
             appUpdateManager.appUpdateInfo
                 .addOnSuccessListener { info: AppUpdateInfo ->
-                    val activity = currentActivity
+                    val activity = reactContext.currentActivity
                     if (activity == null || activity.isFinishing || activity.isDestroyed) {
                         synchronized(this) { pendingUpdatePromise = null }
                         promise.reject("NO_ACTIVITY", "Activity is no longer active.")
