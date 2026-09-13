@@ -18,6 +18,7 @@ import {
   getAuthToken,
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
+import { checkAndEnforceImmediateUpdate } from '../services/playStoreUpdate';
 import { useTheme } from '../theme/ThemeProvider';
 import { OTPLoginModal } from '../components/OTPLoginModal';
 
@@ -31,6 +32,7 @@ const SettingsScreen = () => {
   const [restoring, setRestoring] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<'sync' | 'backup' | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
 
   useEffect(() => {
     // No need to load serverUrl anymore
@@ -425,6 +427,33 @@ const SettingsScreen = () => {
           }
         }}
       />
+
+      {Platform.OS === 'android' && (
+        <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>App Updates</Text>
+          <Text style={[styles.hint, { color: colors.textSecondary }]}>Google Play Store In-App Updates</Text>
+          <TouchableOpacity
+            style={[
+              styles.button,
+              styles.buttonSecondary,
+              { borderColor: colors.border, opacity: checkingUpdates ? 0.6 : 1 },
+            ]}
+            disabled={checkingUpdates}
+            onPress={async () => {
+              setCheckingUpdates(true);
+              try {
+                await checkAndEnforceImmediateUpdate({ manual: true });
+              } finally {
+                setCheckingUpdates(false);
+              }
+            }}
+          >
+            <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>
+              {checkingUpdates ? 'Checking for Updates...' : 'Check for Play Store Updates'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Diagnostics</Text>
