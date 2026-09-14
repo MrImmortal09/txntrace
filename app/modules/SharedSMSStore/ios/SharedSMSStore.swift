@@ -40,6 +40,7 @@ class SharedSMSStore: NSObject {
         if !fromExtension.isEmpty {
             messages.append(contentsOf: fromExtension.map { tag($0, source: "filter") })
             defaults.removeObject(forKey: savedMessagesKey)
+            defaults.synchronize()
         }
 
         resolve(messages)
@@ -67,6 +68,7 @@ class SharedSMSStore: NSObject {
             return
         }
         defaults.set("test_ok_\(Date().timeIntervalSince1970)", forKey: "debug_test")
+        defaults.synchronize()
         let readBack = defaults.string(forKey: "debug_test") ?? "nil"
         resolve("wrote and read back: \(readBack)")
     }
@@ -100,7 +102,7 @@ class SharedSMSStore: NSObject {
     // MARK: - Inbox file
 
     private func readInbox() -> [[String: Any]] {
-        guard let url = inboxURL else { return [] }
+        guard let url = inboxURL, FileManager.default.fileExists(atPath: url.path) else { return [] }
         var contents = ""
         var coordinationError: NSError?
         NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { target in
@@ -112,7 +114,7 @@ class SharedSMSStore: NSObject {
     /// Reads and truncates under a single write coordination so a message arriving
     /// mid-drain is not silently discarded.
     private func drainInbox() -> [[String: Any]] {
-        guard let url = inboxURL else { return [] }
+        guard let url = inboxURL, FileManager.default.fileExists(atPath: url.path) else { return [] }
         var messages: [[String: Any]] = []
         var coordinationError: NSError?
 

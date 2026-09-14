@@ -50,7 +50,8 @@ struct IngestSMSIntent: AppIntent {
     var longitude: Double?
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Save \(\.$messageBody) from \(\.$sender) to TxnTrace") {
+        Summary("Save \(\.$messageBody) to TxnTrace") {
+            \.$sender
             \.$location
             \.$latitude
             \.$longitude
@@ -82,6 +83,9 @@ struct IngestSMSIntent: AppIntent {
         if let lng = longitude {
             record["longitude"] = lng
         }
+        if record["location"] == nil, let lat = latitude, let lng = longitude {
+            record["location"] = "\(lat), \(lng)"
+        }
 
         try SMSInboxWriter.append(record)
         SMSInboxWriter.stampLastRun()
@@ -97,6 +101,11 @@ enum SMSInboxWriter {
     static func append(_ record: [String: Any]) throws {
         guard let url = SMSInbox.fileURL else {
             throw IngestSMSError(reason: "TxnTrace could not open its shared App Group container.")
+        }
+
+        let parentDir = url.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: parentDir.path) {
+            try? FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
         }
 
         var line = try JSONSerialization.data(withJSONObject: record, options: [])
@@ -115,6 +124,7 @@ enum SMSInboxWriter {
                     defer { try? handle.close() }
                     try handle.seekToEnd()
                     try handle.write(contentsOf: line)
+                    try? handle.synchronize()
                 } catch {
                     writeError = error
                 }
@@ -131,5 +141,6 @@ enum SMSInboxWriter {
     static func stampLastRun() {
         guard let defaults = UserDefaults(suiteName: SMSInbox.appGroup) else { return }
         defaults.set(ISO8601DateFormatter().string(from: Date()), forKey: SMSInbox.lastRunKey)
+        defaults.synchronize()
     }
 }

@@ -19,7 +19,7 @@ export const checkNewMessages = async (): Promise<{ error: string | null }> => {
   try {
     if (Platform.OS === 'ios') {
       const messages = await SharedSMSStore.readNewMessages();
-      if (messages && messages.length > 0) {
+      if (Array.isArray(messages) && messages.length > 0) {
         await processSMSBatch(messages);
       }
     }

@@ -16,6 +16,7 @@ import { db } from '../db/schema';
 import { useTheme } from '../theme/ThemeProvider';
 import BankIcon from '../components/BankIcon';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
+import { checkNewMessages } from '../services/smsIngest';
 
 const CHART_HEIGHT = 140;
 
@@ -206,12 +207,13 @@ const HomeScreen = () => {
 
   useFocusEffect(
     useCallback(() => {
-      loadDashboardData();
+      checkNewMessages().then(loadDashboardData);
     }, [loadDashboardData])
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    await checkNewMessages();
     await loadDashboardData();
     setRefreshing(false);
   }, [loadDashboardData]);
