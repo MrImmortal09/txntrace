@@ -121,8 +121,15 @@ class SharedSMSStore: NSObject {
         NSFileCoordinator().coordinate(writingItemAt: url, options: [], error: &coordinationError) { target in
             guard let contents = try? String(contentsOf: target, encoding: .utf8) else { return }
             messages = parse(contents)
-            if !messages.isEmpty {
-                try? Data().write(to: target, options: .atomic)
+            // Truncate the inbox file in-place once read so processed or corrupt lines do not persist
+            if !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let handle = try? FileHandle(forWritingTo: target) {
+                    try? handle.truncate(atOffset: 0)
+                    try? handle.synchronize()
+                    try? handle.close()
+                } else {
+                    try? Data().write(to: target)
+                }
             }
         }
 
@@ -133,7 +140,9 @@ class SharedSMSStore: NSObject {
         contents
             .split(separator: "\n")
             .compactMap { line -> [String: Any]? in
-                guard let data = line.data(using: .utf8),
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                guard let data = trimmed.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 else { return nil }
                 return object

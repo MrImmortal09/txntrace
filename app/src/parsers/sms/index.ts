@@ -130,6 +130,11 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
         }
       }
 
+      // If coordinates are present but textual location is not, format as "lat, lng"
+      if (!location && latitude !== null && longitude !== null) {
+        location = `${latitude}, ${longitude}`;
+      }
+
       if (parsed) {
         const card = matchCard(cards, effectiveSender, body) || matchCard(cards, effectiveSender, normalizedBody);
 
@@ -327,7 +332,7 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
     const cardsRes = await db.execute('SELECT * FROM cards');
     const cardRows: any = cardsRes.rows;
     const cards: Card[] = cardRows?._array || cardRows || [];
-    const card = matchCard(cards, effectiveSender, body);
+    const card = matchCard(cards, effectiveSender, body) || matchCard(cards, effectiveSender, normalizedBody);
 
     // Check if already exists in transactions
     const existingRes = await db.execute(

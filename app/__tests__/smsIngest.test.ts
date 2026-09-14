@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { processSMSBatch } from '../src/parsers/sms';
+import { extractReference } from '../src/parsers/sms/utils';
 import { checkNewMessages } from '../src/services/smsIngest';
 import SharedSMSStore from 'shared-sms-store';
 import { db } from '../src/db/schema';
@@ -234,5 +235,67 @@ describe('SMS Ingestion and Batch Processing', () => {
 
     const result = await checkNewMessages();
     expect(result.error).toBe('Could not read incoming messages. Check SMS setup in Settings.');
+  });
+
+  it('checkNewMessages deduplicates concurrent in-flight calls', async () => {
+    let resolveStore: (val: any) => void = () => {};
+    const pendingPromise = new Promise(resolve => {
+      resolveStore = resolve;
+    });
+
+    (SharedSMSStore.readNewMessages as jest.Mock).mockReturnValue(pendingPromise);
+
+    const call1 = checkNewMessages();
+    const call2 = checkNewMessages();
+
+    expect(SharedSMSStore.readNewMessages).toHaveBeenCalledTimes(1);
+
+    resolveStore([
+      {
+        id: 'ios-concurrent',
+        sender: 'AD-HDFCBK',
+        body: 'Spent Rs. 50.00 at Tea on HDFC Bank Card ending 1234. UPI:999888777666',
+        receivedAt: '2026-09-14T10:00:00.000Z',
+      },
+    ]);
+
+    const [res1, res2] = await Promise.all([call1, call2]);
+    expect(res1).toEqual(res2);
+    expect(res1.error).toBeNull();
+    expect(res1.count).toBe(1);
+    expect(SharedSMSStore.readNewMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('populates location as lat, lng string when coordinates are given but location is omitted', async () => {
+    const rawSms = [
+      {
+        id: 'msg-coord-only',
+        sender: 'AXISBK',
+        body: 'INR 220.00 spent on Axis Bank Card ending 1111 at Coffee on 14-Sep-26. Ref: 123123123123',
+        receivedAt: '2026-09-14T10:00:00.000Z',
+        latitude: 19.0760,
+        longitude: 72.8777,
+      },
+    ];
+
+    await processSMSBatch(rawSms);
+
+    const txnInsert = mockExecutedQueries.find(e =>
+      e.query.includes('INSERT OR IGNORE INTO transactions')
+    );
+    expect(txnInsert).toBeDefined();
+    expect(txnInsert!.params[11]).toBe('19.076, 72.8777');
+    expect(txnInsert!.params[12]).toBe(19.0760);
+    expect(txnInsert!.params[13]).toBe(72.8777);
+  });
+
+  it('extractReference parses multiple bank reference formats accurately', () => {
+    expect(extractReference('Spent Rs 100 UPI:123456789012')).toBe('123456789012');
+    expect(extractReference('Debited INR 500 RRN:987654321098')).toBe('987654321098');
+    expect(extractReference('Paid Rs 250 Ref no: 456789012345')).toBe('456789012345');
+    expect(extractReference('Paid Rs 300 UPI Ref no. 112233445566')).toBe('112233445566');
+    expect(extractReference('Paid Rs 300 UPI txn no 778899001122')).toBe('778899001122');
+    expect(extractReference('Paid Rs 150 Ref-UPI/660730856024/')).toBe('660730856024');
+    expect(extractReference('Plain message with no reference')).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Modal,
   TextInput,
   RefreshControl,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -210,6 +211,17 @@ const HomeScreen = () => {
       checkNewMessages().then(loadDashboardData);
     }, [loadDashboardData])
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        checkNewMessages().then(loadDashboardData);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [loadDashboardData]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

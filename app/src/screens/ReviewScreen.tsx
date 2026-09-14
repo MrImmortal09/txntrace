@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView, Animated, PanResponder } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView, Animated, PanResponder, AppState } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import Contacts from 'react-native-contacts';
 import { db } from '../db/schema';
@@ -121,6 +121,17 @@ const ReviewScreen = () => {
       checkNewMessages().then(loadData);
     }, [loadData])
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        checkNewMessages().then(loadData);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [loadData]);
 
   const handleCardChange = (index: number) => {
     setCurrentIndex(index);
