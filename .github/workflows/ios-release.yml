@@ -162,6 +162,8 @@ jobs:
             echo "Configuring App Group to $APP_GROUP across iOS sources..."
             # Replace default or previous app group if different
             sed -i '' -E "s/group\.[a-zA-Z0-9._]+/$APP_GROUP/g" app/ios/TxnTrace/TxnTrace.entitlements 2>/dev/null || true
+            sed -i '' -E "s/group\.[a-zA-Z0-9._]+/$APP_GROUP/g" app/ios/TxnTraceSMSFilter/TxnTraceSMSFilter.entitlements 2>/dev/null || true
+            sed -i '' -E "s/group\.[a-zA-Z0-9._]+/$APP_GROUP/g" app/ios/TxnTraceSMSFilter/MessageFilterExtension.swift 2>/dev/null || true
             sed -i '' -E "s/group\.[a-zA-Z0-9._]+/$APP_GROUP/g" app/ios/TxnTrace/IngestSMSIntent.swift 2>/dev/null || true
             sed -i '' -E "s/group\.[a-zA-Z0-9._]+/$APP_GROUP/g" app/modules/SharedSMSStore/ios/SharedSMSStore.swift 2>/dev/null || true
           fi

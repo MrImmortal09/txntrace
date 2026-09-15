@@ -91,34 +91,28 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
 
   for (const msg of messages) {
     try {
-      const date = new Date(msg.receivedAt || Date.now()).toISOString();
+      const rawBody = (msg.body || '').trim();
+      if (!rawBody) continue;
 
-      // Shortcuts does not always give us a usable sender (an automation can fire
-      // with it empty). First fallback: most bank SMS name the bank somewhere in
-      // the body too ("...UPI:660887017514-ICICI Bank."), so re-run the same
-      // canHandle checks against the body text itself before giving up on
-      // routing by bank at all — this is what actually recovers the right bank
-      // with no sender, rather than just picking whichever parser's generic
-      // amount/debit-credit wording happens to match first. Only if *that* also
-      // fails does it fall through to trying every parser blind, and only when
-      // the body reads like a bank SMS at all.
-      const parsed =
-        routeSms(msg.sender, msg.body, date) ??
-        routeSms(msg.body, msg.body, date) ??
-        (looksLikeBankSms(msg.body) ? parseAnySms(msg.body, date) : null);
+      const { sender: detectedSender, body } = extractSenderAndBody(rawBody, msg.sender);
+      const effectiveSender = detectedSender || (msg.sender || '').trim();
+      const normalizedBody = body.replace(/\s+/g, ' ').trim();
 
-      // Every distinct message body gets its own log row, even if it turns out to
-      // duplicate another message's transaction — the log is the audit trail, and
-      // collapsing it here would hide the exact duplicate-wording cases (see below)
-      // that this dedup logic exists to catch.
-      const logKey = contentKey(msg.sender, msg.body, date);
+      const smsDate = extractDateFromSms(body) || extractDateFromSms(normalizedBody);
+      const date = smsDate || msg.receivedAt || new Date().toISOString();
 
-      // Some banks send two differently-worded SMS for the same real transaction
-      // (e.g. IndusInd sends a generic debit alert and a separate UPI-specific one).
-      // Those have different bodies, so logKey treats them as unrelated — but they
-      // share the bank's own reference number, so prefer that as the transactions
-      // table's key whenever one can be found, falling back to logKey otherwise.
-      const reference = extractReference(msg.body);
+      let parsed =
+        (effectiveSender
+          ? routeSms(effectiveSender, body, date) ?? routeSms(effectiveSender, normalizedBody, date)
+          : null) ??
+        routeSms(body, body, date) ??
+        routeSms(normalizedBody, normalizedBody, date) ??
+        (looksLikeBankSms(body) || looksLikeBankSms(normalizedBody)
+          ? parseAnySms(body, date) ?? parseAnySms(normalizedBody, date)
+          : null);
+
+      const reference = extractReference(body) || extractReference(normalizedBody);
+      const logKey = contentKey(effectiveSender, body, date);
       const txnKey = reference ? `sms_ref_${reference}` : logKey;
 
       let location: string | null = msg.location ? msg.location.trim() : null;
@@ -136,8 +130,13 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
         }
       }
 
+      // If coordinates are present but textual location is not, format as "lat, lng"
+      if (!location && latitude !== null && longitude !== null) {
+        location = `${latitude}, ${longitude}`;
+      }
+
       if (parsed) {
-        const card = matchCard(cards, msg.sender, msg.body);
+        const card = matchCard(cards, effectiveSender, body) || matchCard(cards, effectiveSender, normalizedBody);
 
         // Raw sender/body are kept alongside the parsed fields — not for display,
         // but so a bad extraction (wrong merchant, wrong amount) can be diagnosed
@@ -154,8 +153,8 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
             parsed.merchant,
             parsed.date,
             'sms',
-            msg.sender,
-            msg.body,
+            effectiveSender,
+            body,
             reference,
             card?.id ?? null,
             location,
@@ -178,7 +177,7 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
           }
         }
       } else {
-        console.log(`No parser found or could not parse SMS from sender: ${msg.sender}`);
+        console.log(`No parser found or could not parse SMS from sender: ${effectiveSender || 'unknown'}`);
       }
 
       // Logged unconditionally — a failed parse is the case most worth seeing
@@ -189,10 +188,10 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           logKey,
-          msg.sender,
-          msg.body,
+          effectiveSender,
+          body,
           date,
-          msg.source ?? 'unknown',
+          msg.source ?? 'shortcut',
           parsed ? 'parsed' : 'unparsed',
           parsed?.bank ?? null,
           parsed?.amount ?? null,
@@ -333,7 +332,7 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
     const cardsRes = await db.execute('SELECT * FROM cards');
     const cardRows: any = cardsRes.rows;
     const cards: Card[] = cardRows?._array || cardRows || [];
-    const card = matchCard(cards, effectiveSender, body);
+    const card = matchCard(cards, effectiveSender, body) || matchCard(cards, effectiveSender, normalizedBody);
 
     // Check if already exists in transactions
     const existingRes = await db.execute(

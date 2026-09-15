@@ -40,6 +40,7 @@ class SharedSMSStore: NSObject {
         if !fromExtension.isEmpty {
             messages.append(contentsOf: fromExtension.map { tag($0, source: "filter") })
             defaults.removeObject(forKey: savedMessagesKey)
+            defaults.synchronize()
         }
 
         resolve(messages)
@@ -67,6 +68,7 @@ class SharedSMSStore: NSObject {
             return
         }
         defaults.set("test_ok_\(Date().timeIntervalSince1970)", forKey: "debug_test")
+        defaults.synchronize()
         let readBack = defaults.string(forKey: "debug_test") ?? "nil"
         resolve("wrote and read back: \(readBack)")
     }
@@ -100,7 +102,7 @@ class SharedSMSStore: NSObject {
     // MARK: - Inbox file
 
     private func readInbox() -> [[String: Any]] {
-        guard let url = inboxURL else { return [] }
+        guard let url = inboxURL, FileManager.default.fileExists(atPath: url.path) else { return [] }
         var contents = ""
         var coordinationError: NSError?
         NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { target in
@@ -112,15 +114,22 @@ class SharedSMSStore: NSObject {
     /// Reads and truncates under a single write coordination so a message arriving
     /// mid-drain is not silently discarded.
     private func drainInbox() -> [[String: Any]] {
-        guard let url = inboxURL else { return [] }
+        guard let url = inboxURL, FileManager.default.fileExists(atPath: url.path) else { return [] }
         var messages: [[String: Any]] = []
         var coordinationError: NSError?
 
         NSFileCoordinator().coordinate(writingItemAt: url, options: [], error: &coordinationError) { target in
             guard let contents = try? String(contentsOf: target, encoding: .utf8) else { return }
             messages = parse(contents)
-            if !messages.isEmpty {
-                try? Data().write(to: target, options: .atomic)
+            // Truncate the inbox file in-place once read so processed or corrupt lines do not persist
+            if !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let handle = try? FileHandle(forWritingTo: target) {
+                    try? handle.truncate(atOffset: 0)
+                    try? handle.synchronize()
+                    try? handle.close()
+                } else {
+                    try? Data().write(to: target)
+                }
             }
         }
 
@@ -131,7 +140,9 @@ class SharedSMSStore: NSObject {
         contents
             .split(separator: "\n")
             .compactMap { line -> [String: Any]? in
-                guard let data = line.data(using: .utf8),
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                guard let data = trimmed.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 else { return nil }
                 return object

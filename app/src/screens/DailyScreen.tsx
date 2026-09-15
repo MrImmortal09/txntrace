@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, Alert, AppState } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Line } from 'react-native-svg';
 import { db } from '../db/schema';
@@ -58,6 +58,17 @@ const DailyScreen = () => {
       checkNewMessages().then(load);
     }, [load])
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        checkNewMessages().then(load);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [load]);
 
   const confirmMine = async (txn: Transaction) => {
     if (singleTapTimerRef.current[txn.id]) {

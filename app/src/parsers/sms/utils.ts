@@ -74,7 +74,7 @@ export const isCreditTransaction = (message: string): boolean => {
  * Matches "UPI:660719831342", "RRN:660730856024", and "Ref-UPI/660730856024/...".
  */
 export const extractReference = (message: string): string | null => {
-  const match = message.match(/(?:UPI(?:\s*(?:Ref|txn))?|RRN|Ref(?:\s*no\.?)?)[:\-/]?\s*(\d{9,})/i);
+  const match = message.match(/(?:UPI(?:\s*(?:Ref|txn))?(?:\s*no\.?)?|RRN|Ref(?:\s*no\.?)?)[:\-/]?\s*(\d{9,})/i);
   return match ? match[1] : null;
 };
 

@@ -41,7 +41,7 @@
 	<key>NSContactsUsageDescription</key>
 	<string>TxnTrace requires access to your contacts to split transactions.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>TxnTrace uses your location to record the place of transactions.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchScreen</key>

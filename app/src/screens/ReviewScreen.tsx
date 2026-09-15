@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView, Animated, PanResponder } from 'react-native';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView, Animated, PanResponder, AppState } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import Contacts from 'react-native-contacts';
 import { db } from '../db/schema';
 import {
@@ -7,6 +8,7 @@ import {
   autoMatchCreditTransaction,
   matchCreditToContact,
 } from '../services/settlements';
+import { checkNewMessages } from '../services/smsIngest';
 import { openLocationInGoogleMaps } from '../utils/maps';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -100,11 +102,7 @@ const ReviewScreen = () => {
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const catRes = await db.execute('SELECT * FROM categories');
       const catRows: any = catRes.rows;
@@ -116,7 +114,24 @@ const ReviewScreen = () => {
     } catch (error) {
       console.error(error);
     }
-  };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      checkNewMessages().then(loadData);
+    }, [loadData])
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        checkNewMessages().then(loadData);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [loadData]);
 
   const handleCardChange = (index: number) => {
     setCurrentIndex(index);

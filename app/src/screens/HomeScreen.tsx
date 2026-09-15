@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Modal,
   TextInput,
   RefreshControl,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -16,6 +17,7 @@ import { db } from '../db/schema';
 import { useTheme } from '../theme/ThemeProvider';
 import BankIcon from '../components/BankIcon';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
+import { checkNewMessages } from '../services/smsIngest';
 
 const CHART_HEIGHT = 140;
 
@@ -206,12 +208,24 @@ const HomeScreen = () => {
 
   useFocusEffect(
     useCallback(() => {
-      loadDashboardData();
+      checkNewMessages().then(loadDashboardData);
     }, [loadDashboardData])
   );
 
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        checkNewMessages().then(loadDashboardData);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [loadDashboardData]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    await checkNewMessages();
     await loadDashboardData();
     setRefreshing(false);
   }, [loadDashboardData]);
