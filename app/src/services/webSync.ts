@@ -178,10 +178,12 @@ interface RemoteCard {
 }
 
 /**
- * Full replace, not a delta sync — the registry is small (a handful of cards,
- * not a growing transaction history) and an edit on the web app (renamed
- * card, changed limit) should take effect on the next sync rather than
- * waiting on a "since" cursor that only makes sense for append-only data.
+ * Mirrors the server's registry rather than a "since" delta — the registry is
+ * small and an edit on the web app (renamed card, changed limit) should take
+ * effect on the next sync. Upserts instead of wiping the table, though: the
+ * statement day and reward program are set on the phone and the server
+ * doesn't store them, and cards added on the phone (origin 'app') must
+ * survive a sync that doesn't know about them.
  */
 export const syncCardsFromServer = async (): Promise<{ count: number }> => {
   const baseUrl = await getServerUrl();
@@ -193,14 +195,28 @@ export const syncCardsFromServer = async (): Promise<{ count: number }> => {
   const data = await res.json();
   const remote: RemoteCard[] = data.cards || [];
 
-  await db.execute('DELETE FROM cards');
   for (const card of remote) {
     await db.execute(
-      `INSERT INTO cards (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO cards (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'web')
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         bank = excluded.bank,
+         last4 = excluded.last4,
+         credit_limit = excluded.credit_limit,
+         is_credit_card = excluded.is_credit_card,
+         custom_pattern = excluded.custom_pattern`,
       [card.id, card.name, card.bank, card.last4, card.credit_limit, card.is_credit_card, card.custom_pattern, card.created_at]
     );
   }
+
+  const remoteIds = remote.map(c => c.id);
+  await db.execute(
+    `DELETE FROM cards WHERE COALESCE(origin, 'web') = 'web'${
+      remoteIds.length ? ` AND id NOT IN (${remoteIds.map(() => '?').join(', ')})` : ''
+    }`,
+    remoteIds
+  );
   return { count: remote.length };
 };
 

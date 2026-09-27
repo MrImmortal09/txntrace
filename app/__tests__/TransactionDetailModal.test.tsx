@@ -26,6 +26,22 @@ jest.mock('../src/utils/maps', () => ({
   openLocationInGoogleMaps: jest.fn(),
 }));
 
+// The real service pulls in the native SQLite module.
+jest.mock('../src/services/creditCards', () => {
+  const { findPreset, clonePresetProgram } = jest.requireActual('../src/services/rewards/presets');
+  const program = clonePresetProgram(findPreset('hdfc_swiggy_blck'));
+  return {
+    getTransactionReward: jest.fn(async () => ({
+      card: { id: 'card_1', name: 'Swiggy BLCK' },
+      program,
+      tier: program.tiers[0],
+      isExplicit: false,
+      reward: { tierId: 'swiggy', units: 85.05, uncappedUnits: 85.05, value: 85.05 },
+    })),
+    setTransactionRewardTier: jest.fn(async () => {}),
+  };
+});
+
 describe('TransactionDetailModal Hold to Copy', () => {
   const sampleTxn: TransactionRow = {
     id: 'txn_123',
@@ -178,5 +194,36 @@ describe('TransactionDetailModal Hold to Copy', () => {
       );
     });
     expect(renderer.toJSON()).toBeNull();
+  });
+  test('shows the reward earned on a credit card spend', async () => {
+    let renderer: any;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TransactionDetailModal transaction={{ ...sampleTxn, card_id: 'card_1' }} onClose={jest.fn()} />
+      );
+      await Promise.resolve();
+    });
+
+    const rewardRow = renderer.root.find(
+      (n: any) => n.props.accessibilityLabel && n.props.accessibilityLabel.startsWith('Reward tier:')
+    );
+    expect(rewardRow.props.accessibilityLabel).toContain('Swiggy');
+    const texts = renderer.root.findAllByType('Text').map((t: any) => t.props.children).flat().join(' ');
+    expect(texts).toContain('₹85.05');
+  });
+
+  test('does not show a reward row for a transaction without a card', async () => {
+    let renderer: any;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TransactionDetailModal transaction={sampleTxn} onClose={jest.fn()} />
+      );
+      await Promise.resolve();
+    });
+
+    const rows = renderer.root.findAll(
+      (n: any) => n.props.accessibilityLabel && String(n.props.accessibilityLabel).startsWith('Reward tier:')
+    );
+    expect(rows.length).toBe(0);
   });
 });

@@ -323,6 +323,16 @@ const SettingsScreen = () => {
         </View>
       </View>
 
+      <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Credit Cards</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>
+          What's due on each card, and whether you got the cashback or points you should have
+        </Text>
+        <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={() => navigation.navigate('Cards')}>
+          <Text style={styles.buttonText}>Cards, Dues & Rewards</Text>
+        </TouchableOpacity>
+      </View>
+
       {Platform.OS === 'ios' && (
         <>
           <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>

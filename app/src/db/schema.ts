@@ -77,6 +77,58 @@ export const setupDatabase = async () => {
     );
   `);
 
+  // Credit-card tracking lives only on the phone: the statement cycle drives
+  // "how much to pay", and reward_program is a JSON RewardProgram (see
+  // services/rewards/engine.ts) copied from a preset so rate edits persist.
+  // origin tells a card added on the phone ('app') from one pulled from the
+  // web ('web'), so a web sync only removes cards the web actually owns.
+  const cardMigrations = [
+    `ALTER TABLE cards ADD COLUMN statement_day INTEGER;`,
+    `ALTER TABLE cards ADD COLUMN due_day INTEGER;`,
+    `ALTER TABLE cards ADD COLUMN reward_preset TEXT;`,
+    `ALTER TABLE cards ADD COLUMN reward_program TEXT;`,
+    `ALTER TABLE cards ADD COLUMN origin TEXT DEFAULT 'web';`,
+    // The reward tier the user picked for a card transaction; NULL means the
+    // card's default (or a merchant-keyword match).
+    `ALTER TABLE transactions ADD COLUMN reward_tier TEXT;`,
+  ];
+  for (const migration of cardMigrations) {
+    try {
+      await db.execute(migration);
+    } catch (error) {
+      // Already migrated.
+    }
+  }
+
+  // Cashback/points actually credited for a statement ('received'), or
+  // points cashed out ('redeemed') — compared against the computed estimate
+  // to spot a bank under-crediting.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS reward_entries (
+      id TEXT PRIMARY KEY,
+      card_id TEXT,
+      kind TEXT, -- 'received' | 'redeemed'
+      cycle_key TEXT, -- statement date (YYYY-MM-DD) for 'received'
+      units REAL, -- ₹ for cashback cards, points for points cards
+      amount REAL, -- ₹ value
+      note TEXT,
+      date TEXT,
+      created_at TEXT
+    );
+  `);
+
+  // The real billed amount off a statement, when the SMS-derived estimate is
+  // off (missed SMS, fees, EMIs, carried-over balance).
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS card_statements (
+      id TEXT PRIMARY KEY, -- card_id:statement_date
+      card_id TEXT,
+      statement_date TEXT,
+      billed_amount REAL,
+      created_at TEXT
+    );
+  `);
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS sms_log (
       id TEXT PRIMARY KEY,

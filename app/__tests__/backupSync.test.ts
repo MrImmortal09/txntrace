@@ -5,6 +5,7 @@ import {
   syncFromServer,
   syncSplitsFromServer,
   syncSettlementsFromServer,
+  syncCardsFromServer,
   setAuthToken,
 } from '../src/services/webSync';
 import { db } from '../src/db/schema';
@@ -57,7 +58,9 @@ jest.mock('../src/db/schema', () => ({
         return { rows: { _array: [...dbStore.cards] } };
       }
       if (normalizedQ.startsWith('DELETE FROM CARDS')) {
-        dbStore.cards = [];
+        // Mirrors syncCardsFromServer: only web-origin cards missing from the remote list are removed.
+        const keep = new Set(params || []);
+        dbStore.cards = dbStore.cards.filter(c => (c.origin ?? 'web') !== 'web' || keep.has(c.id));
         return { rowsAffected: 1 };
       }
       if (normalizedQ.startsWith('INSERT INTO TRANSACTIONS')) {
@@ -141,8 +144,15 @@ jest.mock('../src/db/schema', () => ({
           is_credit_card: params[5],
           custom_pattern: params[6],
           created_at: params[7],
+          origin: 'web',
         };
-        dbStore.cards.push(item);
+        const existing = dbStore.cards.find(c => c.id === item.id);
+        if (existing) {
+          // ON CONFLICT keeps the phone-only columns (origin, statement_day, reward_program).
+          Object.assign(existing, { ...item, origin: existing.origin });
+        } else {
+          dbStore.cards.push(item);
+        }
         return { rowsAffected: 1 };
       }
 
@@ -395,6 +405,30 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
     expect(dbStore.cards.some(c => c.id === 'card_1')).toBe(true);
     expect(dbStore.splits.some(s => s.id === 'split_server_1')).toBe(true);
     expect(dbStore.settlements.some(st => st.id === 'settle_server_1')).toBe(true);
+  });
+
+  it('syncCardsFromServer keeps phone-added cards and phone-only card settings', async () => {
+    dbStore.cards = [
+      { id: 'card_web', name: 'Old name', last4: '1111', origin: 'web', statement_day: 15, reward_program: '{"kind":"cashback"}' },
+      { id: 'card_web_gone', name: 'Deleted on web', last4: '2222', origin: 'web' },
+      { id: 'card_app_1', name: 'Phone card', last4: '3333', origin: 'app', statement_day: 5 },
+    ];
+    (global as any).fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        cards: [{ id: 'card_web', name: 'Renamed on web', bank: 'HDFC', last4: '1111', is_credit_card: 1, created_at: '' }],
+      }),
+    }));
+
+    await syncCardsFromServer();
+
+    const ids = dbStore.cards.map(c => c.id).sort();
+    expect(ids).toEqual(['card_app_1', 'card_web']);
+    const web = dbStore.cards.find(c => c.id === 'card_web');
+    expect(web.name).toBe('Renamed on web');
+    expect(web.statement_day).toBe(15);
+    expect(web.reward_program).toBe('{"kind":"cashback"}');
   });
 
   it('conflict resolution decision: when server data is found, user can choose pull (keep server) or overwrite with local', async () => {
