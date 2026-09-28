@@ -121,6 +121,31 @@ describe('computeRewards', () => {
     expect(rewards.get(txns[1].id)!.units).toBe(1500);
   });
 
+  it('gives the same result no matter what order overlapping caps are listed in', () => {
+    const capsSpec = (tierIds: string[], limit: number) => ({ id: `c${limit}${tierIds.join('')}`, label: '', limit, period: 'cycle' as const, tierIds });
+    const base = {
+      kind: 'cashback' as const,
+      blockSize: 0,
+      pointValue: 1,
+      autoCredit: true,
+      defaultTierId: 'online',
+      tiers: [
+        { id: 'online', label: 'Online', rate: 5 },
+        { id: 'offline', label: 'Offline', rate: 1 },
+      ],
+    };
+    const individualFirst = { ...base, caps: [capsSpec(['online'], 2000), capsSpec(['online', 'offline'], 4000)] };
+    const combinedFirst = { ...base, caps: [capsSpec(['online', 'offline'], 4000), capsSpec(['online'], 2000)] };
+
+    const run = (program: typeof individualFirst) =>
+      computeRewards(program, 15, [debit(50000, '2026-09-01T10:00:00', 'A', 'online')]); // 5% of 50000 = 2500, uncapped
+
+    const a = [...run(individualFirst).values()][0];
+    const b = [...run(combinedFirst).values()][0];
+    expect(a.units).toBe(2000);
+    expect(b.units).toBe(2000);
+  });
+
   it('applies quarterly caps across statement cycles', () => {
     const flipkart = program('axis_flipkart');
     const txns = [

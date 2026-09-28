@@ -187,6 +187,10 @@ export const computeRewards = (
     }
 
     const uncappedUnits = units;
+    // Order of `program.caps` doesn't matter: each cap.forEach step only reads capUsed as it stood
+    // *before* this transaction, so `units` converges to min(uncappedUnits, ...every cap's headroom)
+    // regardless of iteration order — then every applicable cap is credited with that same final,
+    // already-fully-capped amount (the actual units awarded), never with an intermediate value.
     const caps = program.caps.filter(c => c.tierIds.includes(tier.id));
     const capKeys = caps.map(c => `${c.id}|${c.period === 'quarter' ? quarterKey(when) : cycleKey}`);
     caps.forEach((cap, i) => {

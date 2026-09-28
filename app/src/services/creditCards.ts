@@ -108,7 +108,7 @@ export const saveCreditCard = async (input: CreditCardInput): Promise<string> =>
         input.id,
       ]
     );
-    await rematchCardTransactions(input.id);
+    await safeRematch(input.id);
     return input.id;
   }
 
@@ -130,7 +130,7 @@ export const saveCreditCard = async (input: CreditCardInput): Promise<string> =>
       programJson,
     ]
   );
-  await rematchCardTransactions();
+  await safeRematch();
   return id;
 };
 
@@ -140,7 +140,20 @@ export const deleteCreditCard = async (id: string): Promise<void> => {
   await db.execute('DELETE FROM reward_entries WHERE card_id = ?', [id]);
   await db.execute('DELETE FROM card_statements WHERE card_id = ?', [id]);
   // Another card may share the same digits now that this one is gone.
-  await rematchCardTransactions();
+  await safeRematch();
+};
+
+/**
+ * The card row is already committed by the time this runs — a rematch
+ * failure (or just being slow on a big SMS history) shouldn't make the
+ * save/delete itself look like it failed to the caller.
+ */
+const safeRematch = async (resetCardId?: string): Promise<void> => {
+  try {
+    await rematchCardTransactions(resetCardId);
+  } catch (e) {
+    console.error('Failed to rematch card transactions:', e);
+  }
 };
 
 const loadCardTxns = async (cardId: string): Promise<RewardTxn[]> =>
@@ -252,7 +265,11 @@ export interface TransactionRewardInfo {
   reward: TxnReward | null;
 }
 
-/** Reward for one transaction, computed against the card's full history so caps and thresholds are honoured. */
+/**
+ * Reward for one transaction, computed against the card's full history so caps and thresholds are honoured.
+ * If the card has no statement_day set, computeRewards falls back to calendar-month cycles for cap bucketing
+ * (see CALENDAR_MONTH in engine.ts) — sensible until the user fills in a real statement day.
+ */
 export const getTransactionReward = async (txnId: string, cardId: string): Promise<TransactionRewardInfo | null> => {
   const card = await getCreditCard(cardId);
   if (!card?.program) return null;

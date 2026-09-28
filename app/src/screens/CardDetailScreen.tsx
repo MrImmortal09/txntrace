@@ -424,6 +424,7 @@ const CardDetailScreen = () => {
         label={program?.kind === 'points' ? 'Points' : 'Amount (₹)'}
         initialValue={prompt?.kind === 'received' ? prompt.cycle.receivedUnits ?? prompt.cycle.expectedUnits : null}
         clearLabel={prompt?.kind === 'received' && prompt.cycle.receivedUnits !== null ? 'Remove' : undefined}
+        confirmClear="Remove the logged amount for this statement? This can't be undone."
         onSubmit={submitPrompt}
         onClose={() => setPrompt(null)}
       />

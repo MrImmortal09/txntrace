@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Alert,
   View,
   Text,
   StyleSheet,
@@ -20,6 +21,8 @@ interface Props {
   submitLabel?: string;
   /** Shows a "Clear" action that submits null (e.g. drop a manual override). */
   clearLabel?: string;
+  /** If set, tapping Clear asks for confirmation with this message first (e.g. when clearing deletes logged data rather than just reverting to an estimate). */
+  confirmClear?: string;
   /** null only ever arrives via the Clear button (only shown when clearLabel is set) — Save always sends a valid number. */
   onSubmit: (value: number | null) => void;
   onClose: () => void;
@@ -34,6 +37,7 @@ const AmountPromptModal = ({
   initialValue,
   submitLabel = 'Save',
   clearLabel,
+  confirmClear,
   onSubmit,
   onClose,
 }: Props) => {
@@ -46,6 +50,14 @@ const AmountPromptModal = ({
 
   const parsed = parseFloat(value.replace(/,/g, ''));
   const valid = !isNaN(parsed) && parsed >= 0;
+
+  const handleClear = () => {
+    if (!confirmClear) return onSubmit(null);
+    Alert.alert(clearLabel || 'Clear', confirmClear, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: clearLabel || 'Clear', style: 'destructive', onPress: () => onSubmit(null) },
+    ]);
+  };
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
@@ -68,7 +80,7 @@ const AmountPromptModal = ({
 
           <View style={styles.actions}>
             {clearLabel ? (
-              <TouchableOpacity style={[styles.textButton, styles.clearButton]} onPress={() => onSubmit(null)}>
+              <TouchableOpacity style={[styles.textButton, styles.clearButton]} onPress={handleClear}>
                 <Text style={[styles.textButtonLabel, { color: colors.danger }]}>{clearLabel}</Text>
               </TouchableOpacity>
             ) : null}
