@@ -122,6 +122,7 @@ export const resolveTier = (program: RewardProgram, txn: Pick<RewardTxn, 'reward
   if (program.tiers.length === 0) return null;
   const explicit = txn.reward_tier ? program.tiers.find(t => t.id === txn.reward_tier) : undefined;
   if (explicit) return explicit;
+  // txn.reward_tier may point at a tier that no longer exists (program edited after the tier was set) — fall through.
 
   const merchant = (txn.merchant_raw || '').toLowerCase();
   if (merchant) {
@@ -361,6 +362,7 @@ export const buildCardOverview = ({
 
   const last = cycles.get(lastKey)!;
   const billedIsManual = billedOverrides[lastKey] !== undefined;
+  // Relies on last.netSpend having been set in the cycles.values() loop above — must stay after it.
   const billed = billedIsManual ? billedOverrides[lastKey] : Math.max(0, last.netSpend);
 
   return {
@@ -402,7 +404,7 @@ export const formatTierRate = (program: RewardProgram, tier: RewardTier): string
 };
 
 export const daysUntil = (d: Date, today: Date = new Date()): number =>
-  Math.round((startOfDay(d).getTime() - startOfDay(today).getTime()) / 86400000);
+  Math.trunc((startOfDay(d).getTime() - startOfDay(today).getTime()) / 86400000);
 
 export const dueLabel = (days: number): string =>
   days < 0 ? `overdue by ${-days}d` : days === 0 ? 'due today' : `due in ${days}d`;

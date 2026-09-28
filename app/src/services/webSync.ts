@@ -193,7 +193,8 @@ export const syncCardsFromServer = async (): Promise<{ count: number }> => {
   const res = await fetch(`${baseUrl}/api/cards/export`, { headers });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
-  const remote: RemoteCard[] = data.cards || [];
+  if (!Array.isArray(data.cards)) throw new Error('Malformed response from server: missing cards array.');
+  const remote: RemoteCard[] = data.cards;
 
   for (const card of remote) {
     await db.execute(

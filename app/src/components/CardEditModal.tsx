@@ -132,7 +132,8 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
     const limit = creditLimit.trim() ? numOrNull(creditLimit) : null;
 
     if (!name.trim()) return Alert.alert('Missing name', 'Give the card a name, e.g. "SBI Cashback".');
-    if (digits.length < 2 || digits.length > 6) return Alert.alert('Card digits', 'Enter the last 4 digits of the card.');
+    // Accepts 2–6 digits: banks mask a different number of trailing digits in their SMS (e.g. "XX1234" vs "XXXXXX1234").
+    if (digits.length < 2 || digits.length > 6) return Alert.alert('Card digits', 'Enter the last digits of the card, as they appear in your bank SMS.');
     if (!sDay || sDay < 1 || sDay > 31 || !Number.isInteger(sDay)) {
       return Alert.alert('Statement date', 'Enter the day of the month your statement is generated (1–31).');
     }
@@ -210,7 +211,7 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
 
           <View style={styles.row}>
             <View style={styles.col}>
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Last 4 digits</Text>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Last digits</Text>
               <TextInput style={inputStyle} value={last4} onChangeText={setLast4} placeholder="1234" keyboardType="number-pad" maxLength={6} placeholderTextColor={colors.textSecondary} />
             </View>
             <View style={styles.col}>

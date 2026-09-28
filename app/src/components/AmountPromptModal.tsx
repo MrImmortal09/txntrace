@@ -20,6 +20,7 @@ interface Props {
   submitLabel?: string;
   /** Shows a "Clear" action that submits null (e.g. drop a manual override). */
   clearLabel?: string;
+  /** null only ever arrives via the Clear button (only shown when clearLabel is set) — Save always sends a valid number. */
   onSubmit: (value: number | null) => void;
   onClose: () => void;
 }

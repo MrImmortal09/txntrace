@@ -107,6 +107,20 @@ describe('computeRewards', () => {
     expect(rewards.get(txns[1].id)!.units).toBe(2000);
   });
 
+  it('accounts a combined cap by actually-awarded units, not uncapped units, when an individual cap also binds', () => {
+    const sbi = program('sbi_cashback');
+    // online cap 2000/cycle, offline cap 2000/cycle, combined cap 4000/cycle.
+    const txns = [
+      debit(50000, '2026-09-01T10:00:00', 'A', 'online'), // 5% = 2500 → online cap trims to 2000
+      debit(150000, '2026-09-02T10:00:00', 'B', 'offline'), // 1% = 1500, only 2000 left on combined cap
+    ];
+    const rewards = computeRewards(sbi, 15, txns);
+    expect(rewards.get(txns[0].id)!.units).toBe(2000); // bound by the online cap, not the combined cap
+    // Combined cap usage after txn 1 must be 2000 (what was actually earned), not 2500 (the uncapped amount) —
+    // otherwise txn 2 would be shortchanged on the combined cap it never actually pushed up against.
+    expect(rewards.get(txns[1].id)!.units).toBe(1500);
+  });
+
   it('applies quarterly caps across statement cycles', () => {
     const flipkart = program('axis_flipkart');
     const txns = [

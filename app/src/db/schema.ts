@@ -89,7 +89,10 @@ export const setupDatabase = async () => {
     `ALTER TABLE cards ADD COLUMN reward_program TEXT;`,
     `ALTER TABLE cards ADD COLUMN origin TEXT DEFAULT 'web';`,
     // The reward tier the user picked for a card transaction; NULL means the
-    // card's default (or a merchant-keyword match).
+    // card's default (or a merchant-keyword match). Phone-only, like the
+    // cards.* columns above: setTransactionRewardTier() in creditCards.ts
+    // deliberately doesn't bump updated_at when writing it, so web sync
+    // doesn't mistake it for a locally edited row.
     `ALTER TABLE transactions ADD COLUMN reward_tier TEXT;`,
   ];
   for (const migration of cardMigrations) {

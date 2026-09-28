@@ -431,6 +431,38 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
     expect(web.reward_program).toBe('{"kind":"cashback"}');
   });
 
+  it('syncCardsFromServer removes web cards when the server legitimately has none', async () => {
+    dbStore.cards = [
+      { id: 'card_web', name: 'Only web card', last4: '1111', origin: 'web' },
+      { id: 'card_app_1', name: 'Phone card', last4: '3333', origin: 'app', statement_day: 5 },
+    ];
+    (global as any).fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ cards: [] }),
+    }));
+
+    await syncCardsFromServer();
+
+    expect(dbStore.cards.map(c => c.id)).toEqual(['card_app_1']);
+  });
+
+  it('syncCardsFromServer throws and keeps web cards on a malformed response instead of wiping them', async () => {
+    dbStore.cards = [
+      { id: 'card_web', name: 'Only web card', last4: '1111', origin: 'web' },
+      { id: 'card_app_1', name: 'Phone card', last4: '3333', origin: 'app', statement_day: 5 },
+    ];
+    (global as any).fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({}), // e.g. a transient/proxy error body with no `cards` field
+    }));
+
+    await expect(syncCardsFromServer()).rejects.toThrow();
+
+    expect(dbStore.cards.map(c => c.id).sort()).toEqual(['card_app_1', 'card_web']);
+  });
+
   it('conflict resolution decision: when server data is found, user can choose pull (keep server) or overwrite with local', async () => {
     // Simulate server having existing records
     (global as any).fetch = jest.fn(async (url: string, opts?: any) => {

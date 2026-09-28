@@ -47,6 +47,7 @@ const CardsScreen = () => {
   const totalToPay = rows.reduce((sum, r) => sum + (r.overview?.toPay || 0), 0);
   const totalUnbilled = rows.reduce((sum, r) => sum + Math.max(0, r.overview?.current.netSpend || 0), 0);
   const totalRewards = rows.reduce((sum, r) => sum + (r.overview?.current.expectedValue || 0), 0);
+  const anyRewardsConfigured = rows.some(r => r.card.program);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -59,7 +60,9 @@ const CardsScreen = () => {
           <Text style={styles.summaryAmount}>{formatRupees(totalToPay)}</Text>
           <View style={styles.summaryRow}>
             <Text style={styles.summaryMeta}>Unbilled {formatRupees(totalUnbilled)}</Text>
-            <Text style={styles.summaryMeta}>Rewards this cycle ≈ {formatRupees(totalRewards)}</Text>
+            {anyRewardsConfigured ? (
+              <Text style={styles.summaryMeta}>Rewards this cycle ≈ {formatRupees(totalRewards)}</Text>
+            ) : null}
           </View>
         </View>
 
