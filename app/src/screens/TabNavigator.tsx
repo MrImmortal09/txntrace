@@ -13,6 +13,8 @@ import DailyScreen from './DailyScreen';
 import LogsScreen from './LogsScreen';
 import FriendsStack from './FriendsStack';
 import SettingsScreen from './SettingsScreen';
+import CardsScreen from './CardsScreen';
+import CardDetailScreen from './CardDetailScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -24,6 +26,8 @@ const MoreStack = () => {
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen name="Statements" component={StatementsScreen} />
       <Stack.Screen name="Logs" component={LogsScreen} />
+      <Stack.Screen name="Cards" component={CardsScreen} options={{ title: 'Credit Cards' }} />
+      <Stack.Screen name="CardDetail" component={CardDetailScreen} options={({ route }: any) => ({ title: route.params?.title || 'Card' })} />
     </Stack.Navigator>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,9 @@ import {
 } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
 import { openLocationInGoogleMaps } from '../utils/maps';
+import { getTransactionReward, setTransactionRewardTier, TransactionRewardInfo } from '../services/creditCards';
+import { formatTierRate, formatUnits } from '../services/rewards/engine';
+import RewardTierPicker from './RewardTierPicker';
 
 export interface TransactionRow {
   id: string;
@@ -51,6 +54,65 @@ const DETAIL_FIELDS: [keyof TransactionRow, string][] = [
   ['sender', 'Sender'],
   ['source', 'Source'],
 ];
+
+/** Which reward tier a credit-card spend earned under, and what it's worth — tap to change the tier. */
+const CardRewardRow = ({ transactionId, cardId, amount }: { transactionId: string; cardId: string; amount: number }) => {
+  const { colors } = useTheme();
+  const [info, setInfo] = useState<TransactionRewardInfo | null>(null);
+  const [picking, setPicking] = useState(false);
+
+  const load = useCallback(() => {
+    getTransactionReward(transactionId, cardId)
+      .then(setInfo)
+      .catch(e => console.error('Failed to load reward info:', e));
+  }, [transactionId, cardId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (!info) return null;
+  const { program, tier, reward, card } = info;
+  const capped = reward && reward.units < reward.uncappedUnits;
+
+  return (
+    <>
+      <TouchableOpacity
+        style={[styles.rewardCard, { backgroundColor: colors.background, borderColor: colors.border }]}
+        onPress={() => setPicking(true)}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`Reward tier: ${tier.label}. Tap to change.`}
+      >
+        <View style={styles.rewardTextWrap}>
+          <Text style={[styles.messageCardLabel, { color: colors.textSecondary }]}>
+            {card.name} reward{info.isExplicit ? '' : ' · auto'}
+          </Text>
+          <Text style={[styles.rewardTier, { color: colors.text }]} numberOfLines={2}>
+            {tier.label} · {formatTierRate(program, tier)} ▾
+          </Text>
+        </View>
+        <Text style={[styles.rewardValue, { color: reward && reward.units > 0 ? colors.success : colors.textSecondary }]}>
+          {formatUnits(program, reward?.units || 0)}
+          {capped ? '\n(capped)' : ''}
+        </Text>
+      </TouchableOpacity>
+      <RewardTierPicker
+        visible={picking}
+        program={program}
+        amount={amount}
+        currentTierId={tier.id}
+        isExplicit={info.isExplicit}
+        onSelect={async tierId => {
+          await setTransactionRewardTier(transactionId, tierId);
+          setPicking(false);
+          load();
+        }}
+        onClose={() => setPicking(false)}
+      />
+    </>
+  );
+};
 
 const TransactionDetailModal = ({ transaction, onClose }: Props) => {
   const { colors } = useTheme();
@@ -186,6 +248,10 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
           ) : null}
 
           <ScrollView style={styles.fieldsScroll} showsVerticalScrollIndicator={false}>
+            {transaction.card_id && transaction.type === 'debit' ? (
+              <CardRewardRow transactionId={transaction.id} cardId={transaction.card_id} amount={transaction.amount} />
+            ) : null}
+
             {/* Specially Highlighted: Received Message Content (Hold to copy) */}
             {transaction.sms_body ? (
               <TouchableOpacity
@@ -302,6 +368,20 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
   fieldsScroll: { marginBottom: 8 },
+
+  // Card reward
+  rewardCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 14,
+    marginTop: 4,
+  },
+  rewardTextWrap: { flex: 1, marginRight: 12 },
+  rewardTier: { fontSize: 14, fontWeight: '600', marginTop: 4 },
+  rewardValue: { fontSize: 16, fontWeight: '800', textAlign: 'right' },
 
   // Message Card
   messageCard: {
