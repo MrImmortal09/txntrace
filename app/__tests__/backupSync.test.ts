@@ -162,7 +162,7 @@ jest.mock('../src/db/schema', () => ({
 }));
 
 // Global fetch mock
-const originalFetch = (global as any).fetch;
+const originalFetch = (globalThis as any).fetch;
 
 describe('Cloud Backup & Server Conflict Resolution', () => {
   beforeEach(async () => {
@@ -176,11 +176,11 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
   });
 
   afterAll(() => {
-    (global as any).fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
   });
 
   it('checkServerBackupStatus correctly detects existing server data and counts', async () => {
-    (global as any).fetch = jest.fn(async (url: string) => {
+    (globalThis as any).fetch = jest.fn(async (url: string) => {
       if (url.endsWith('/api/backup/status')) {
         return {
           ok: true,
@@ -210,7 +210,7 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
   });
 
   it('checkServerBackupStatus returns exists=false when server has no data', async () => {
-    (global as any).fetch = jest.fn(async (url: string) => {
+    (globalThis as any).fetch = jest.fn(async (url: string) => {
       if (url.endsWith('/api/backup/status')) {
         return {
           ok: true,
@@ -272,7 +272,7 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
     });
 
     let uploadedPayload: any = null;
-    (global as any).fetch = jest.fn(async (url: string, opts: any) => {
+    (globalThis as any).fetch = jest.fn(async (url: string, opts: any) => {
       if (url.endsWith('/api/backup/upload')) {
         uploadedPayload = JSON.parse(opts.body);
         return {
@@ -309,7 +309,7 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
   });
 
   it('restoreFromServer pulls all remote transactions, cards, splits, and settlements into local DB', async () => {
-    (global as any).fetch = jest.fn(async (url: string) => {
+    (globalThis as any).fetch = jest.fn(async (url: string) => {
       if (url.includes('/api/transactions/export')) {
         return {
           ok: true,
@@ -413,7 +413,7 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
       { id: 'card_web_gone', name: 'Deleted on web', last4: '2222', origin: 'web' },
       { id: 'card_app_1', name: 'Phone card', last4: '3333', origin: 'app', statement_day: 5 },
     ];
-    (global as any).fetch = jest.fn(async () => ({
+    (globalThis as any).fetch = jest.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
@@ -436,7 +436,7 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
       { id: 'card_web', name: 'Only web card', last4: '1111', origin: 'web' },
       { id: 'card_app_1', name: 'Phone card', last4: '3333', origin: 'app', statement_day: 5 },
     ];
-    (global as any).fetch = jest.fn(async () => ({
+    (globalThis as any).fetch = jest.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ cards: [] }),
@@ -452,7 +452,7 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
       { id: 'card_web', name: 'Only web card', last4: '1111', origin: 'web' },
       { id: 'card_app_1', name: 'Phone card', last4: '3333', origin: 'app', statement_day: 5 },
     ];
-    (global as any).fetch = jest.fn(async () => ({
+    (globalThis as any).fetch = jest.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({}), // e.g. a transient/proxy error body with no `cards` field
@@ -465,7 +465,7 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
 
   it('conflict resolution decision: when server data is found, user can choose pull (keep server) or overwrite with local', async () => {
     // Simulate server having existing records
-    (global as any).fetch = jest.fn(async (url: string, opts?: any) => {
+    (globalThis as any).fetch = jest.fn(async (url: string, opts?: any) => {
       if (url.endsWith('/api/backup/status')) {
         return {
           ok: true,
@@ -536,7 +536,7 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
       { id: 'st_1', contact_id: 'c1', contact_name: 'A', amount: 50, date: '2026-09-12', created_at: '2026-09-12T16:00:00Z' },
     ];
 
-    (global as any).fetch = jest.fn(async () => ({
+    (globalThis as any).fetch = jest.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({

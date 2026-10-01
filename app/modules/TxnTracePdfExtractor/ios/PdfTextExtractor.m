@@ -3,6 +3,7 @@
 @interface RCT_EXTERN_MODULE(PdfTextExtractor, NSObject)
 
 RCT_EXTERN_METHOD(extractText:(NSString *)filePath
+                 password:(NSString *)password
                  withResolver:(RCTPromiseResolveBlock)resolve
                  withRejecter:(RCTPromiseRejectBlock)reject)
 

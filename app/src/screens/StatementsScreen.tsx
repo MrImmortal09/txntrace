@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, ScrollView } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import DocumentPicker from 'react-native-document-picker';
-import Papa from 'papaparse';
 import { BankId, ParsedTransaction } from '../types';
+import { useTheme } from '../theme/ThemeProvider';
 import { extractTextFromPdf } from '../utils/PdfExtractor';
 import { parseStatement } from '../parsers/statements';
-import { db } from '../db/schema'; // Ensure we can save
+import { CreditCard, loadCreditCards } from '../services/creditCards';
+import { PlannedRow, previewStatementImport, saveStatementImport } from '../services/statementImport';
+import { formatRupees, formatShortDate } from '../services/rewards/engine';
 
 const BANKS: { id: BankId; name: string }[] = [
   { id: 'hdfc', name: 'HDFC Bank' },
@@ -17,14 +20,76 @@ const BANKS: { id: BankId; name: string }[] = [
   { id: 'idfcfirst', name: 'IDFC First Bank' },
 ];
 
+/** First word of the bank name ("IDFC", "HDFC") — enough to pre-pick the matching card. */
+const bankWord = (name: string | null | undefined) => (name || '').trim().split(/\s+/)[0]?.toLowerCase() || '';
+
+/** iOS-only prompt, which is fine: PDF extraction is only implemented natively on iOS. */
+const askPassword = (message: string): Promise<string | null> =>
+  new Promise(resolve =>
+    Alert.prompt(
+      'Statement password',
+      message,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+        { text: 'Open', onPress: (value?: string) => resolve(value || null) },
+      ],
+      'secure-text'
+    )
+  );
+
+/** Asks for the password until the PDF opens or the user gives up. */
+const readPdf = async (uri: string): Promise<string | null> => {
+  let password: string | undefined;
+  for (;;) {
+    try {
+      return await extractTextFromPdf(uri, password);
+    } catch (e: any) {
+      if (e?.code !== 'ERR_PDF_LOCKED' && e?.code !== 'ERR_PDF_PASSWORD') throw e;
+      const next = await askPassword(
+        e.code === 'ERR_PDF_PASSWORD'
+          ? 'That password didn\'t work. Try again.'
+          : 'This statement is locked. Banks usually use part of your name plus your date of birth — check the statement email.'
+      );
+      if (next === null) return null;
+      password = next;
+    }
+  }
+};
+
 const StatementsScreen = () => {
+  const { colors } = useTheme();
   const [selectedBank, setSelectedBank] = useState<BankId | null>(null);
-  const [previewData, setPreviewData] = useState<ParsedTransaction[]>([]);
+  const [cards, setCards] = useState<CreditCard[]>([]);
+  // undefined = not chosen yet; null = not a credit card (bank account statement).
+  const [cardId, setCardId] = useState<string | null | undefined>(undefined);
+  const [plan, setPlan] = useState<PlannedRow[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCreditCards()
+        .then(setCards)
+        .catch(e => console.error('Failed to load cards:', e));
+    }, [])
+  );
+
+  const bankName = BANKS.find(b => b.id === selectedBank)?.name || '';
+
+  const pickBank = (id: BankId) => {
+    setSelectedBank(id);
+    setPlan([]);
+    const word = bankWord(BANKS.find(b => b.id === id)?.name);
+    const matching = cards.filter(c => bankWord(c.bank) === word || bankWord(c.name) === word);
+    setCardId(matching.length === 1 ? matching[0].id : undefined);
+  };
 
   const handlePickDocument = async () => {
     if (!selectedBank) {
-      Alert.alert('Select Bank', 'Please select a bank first.');
+      Alert.alert('Select bank', 'Pick the bank first.');
+      return;
+    }
+    if (cardId === undefined) {
+      Alert.alert('Select card', 'Pick which card this statement is for, or "Bank account".');
       return;
     }
 
@@ -32,137 +97,139 @@ const StatementsScreen = () => {
       const res = await DocumentPicker.pickSingle({
         type: [DocumentPicker.types.pdf, DocumentPicker.types.csv, DocumentPicker.types.xls, DocumentPicker.types.xlsx],
         presentationStyle: 'fullScreen',
+        // A local copy, so the native PDF reader isn't blocked by the picker's security-scoped URL.
+        copyTo: 'cachesDirectory',
       });
+      const uri = res.fileCopyUri || res.uri;
 
       setLoading(true);
+      const lowerName = res.name?.toLowerCase() || '';
+      const isPdf = lowerName.endsWith('.pdf') || res.type === 'application/pdf';
+      const isCsv = lowerName.endsWith('.csv') || res.type === 'text/csv';
+      const isXls = lowerName.endsWith('.xls') || lowerName.endsWith('.xlsx');
 
-      const isPdf = res.name?.toLowerCase().endsWith('.pdf') || res.type === 'application/pdf';
-      const isCsv = res.name?.toLowerCase().endsWith('.csv') || res.type === 'text/csv';
-      const isXls = res.name?.toLowerCase().endsWith('.xls') || res.name?.toLowerCase().endsWith('.xlsx');
-      
-      let rawText = '';
+      let rawText: string | null = '';
       if (isPdf) {
-        rawText = await extractTextFromPdf(res.uri);
+        rawText = await readPdf(uri);
+        if (rawText === null) return;
       } else if (isCsv || isXls) {
-        // Read text content using fetch for local URI
-        const response = await fetch(res.uri);
+        const response = await fetch(uri);
         rawText = await response.text();
-        
-        // Note: For XLS/XLSX we might need to use `xlsx` library and read as arraybuffer,
-        // but for now we fallback to raw text parsing strategy since we rely on `parseStatement`.
-        // The parser can use Papa internally if it's CSV.
       } else {
         throw new Error('Unsupported file format');
       }
 
-      const parsedTransactions = parseStatement(selectedBank, rawText, !!(isCsv || isXls));
-      
-      if (parsedTransactions.length === 0) {
-        Alert.alert('No Transactions', 'Could not parse any transactions from this document. (Parser might be a skeleton)');
+      const parsed: ParsedTransaction[] = parseStatement(selectedBank, rawText, !!(isCsv || isXls));
+      if (parsed.length === 0) {
+        Alert.alert('No transactions found', `Couldn't read any transactions from this ${bankName} statement.`);
       }
-      
-      setPreviewData(parsedTransactions);
+      setPlan(await previewStatementImport(parsed, cardId, bankName));
     } catch (err) {
       if (!DocumentPicker.isCancel(err)) {
         console.error(err);
-        Alert.alert('Error', 'Failed to read document');
+        Alert.alert('Error', 'Failed to read the document.');
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSaveToDb = async () => {
-    if (previewData.length === 0) return;
-    
+  const handleSave = async () => {
+    if (cardId === undefined) return;
     try {
       setLoading(true);
-      // Example DB insertion, assuming db is available and setupDatabase was called
-      // In a real app we'd batch these properly
-      for (const txn of previewData) {
-        await db.execute(
-          `INSERT OR IGNORE INTO transactions 
-            (id, bank, amount, type, merchant_raw, date, source, currency) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            txn.transactionHash || String(Date.now() + Math.random()), 
-            txn.bankName, 
-            txn.amount, 
-            txn.type, 
-            txn.merchant || '', 
-            new Date(txn.timestamp).toISOString(), 
-            'statement',
-            txn.currency
-          ]
-        );
-      }
-      Alert.alert('Success', 'Transactions imported successfully!');
-      setPreviewData([]);
+      const added = await saveStatementImport(plan, cardId);
+      Alert.alert('Imported', added === 0 ? 'Everything on this statement was already tracked.' : `Added ${added} transaction${added === 1 ? '' : 's'}.`);
+      setPlan([]);
     } catch (error) {
       console.error(error);
-      Alert.alert('DB Error', 'Failed to save transactions');
+      Alert.alert('Could not save', 'Failed to save transactions.');
     } finally {
       setLoading(false);
     }
   };
 
-  const renderTransaction = ({ item }: { item: ParsedTransaction }) => (
-    <View style={styles.txnRow}>
-      <Text>{new Date(item.timestamp).toLocaleDateString()}</Text>
-      <Text style={styles.merchant}>{item.merchant || 'Unknown'}</Text>
-      <Text style={item.type === 'credit' ? styles.credit : styles.debit}>
-        {item.type === 'credit' ? '+' : '-'}{item.amount} {item.currency}
-      </Text>
-    </View>
+  const newCount = plan.filter(p => !p.matchedId).length;
+
+  const chip = (key: string, label: string, active: boolean, onPress: () => void) => (
+    <TouchableOpacity
+      key={key}
+      style={[styles.chip, { borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.primary : colors.surface }]}
+      onPress={onPress}
+    >
+      <Text style={[styles.chipText, { color: active ? '#fff' : colors.text }]}>{label}</Text>
+    </TouchableOpacity>
   );
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Import Statement</Text>
-      
-      <View style={styles.bankSelector}>
-        <Text style={styles.label}>1. Select Bank</Text>
-        <FlatList
-          horizontal
-          data={BANKS}
-          keyExtractor={(item) => item.id}
-          showsHorizontalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <TouchableOpacity 
-              style={[styles.bankButton, selectedBank === item.id && styles.bankButtonSelected]}
-              onPress={() => setSelectedBank(item.id)}
-            >
-              <Text style={selectedBank === item.id ? styles.bankButtonTextSelected : styles.bankButtonText}>
-                {item.name}
-              </Text>
-            </TouchableOpacity>
-          )}
-        />
+  const renderRow = ({ item }: { item: PlannedRow }) => {
+    const { row, matchedId } = item;
+    const isCredit = row.type === 'credit';
+    return (
+      <View style={[styles.txnRow, { borderBottomColor: colors.border }, matchedId ? styles.dimmed : null]}>
+        <View style={styles.txnMain}>
+          <Text style={[styles.merchant, { color: colors.text }]} numberOfLines={1}>
+            {row.merchant || 'Unknown'}
+          </Text>
+          <Text style={[styles.meta, { color: colors.textSecondary }]}>
+            {formatShortDate(new Date(row.timestamp))}
+            {matchedId ? ' · already tracked' : ' · new'}
+          </Text>
+        </View>
+        <Text style={[styles.amount, { color: isCredit ? colors.success : colors.text }]}>
+          {isCredit ? '+' : ''}
+          {formatRupees(row.amount, 2)}
+        </Text>
       </View>
+    );
+  };
 
-      <View style={styles.actionSection}>
-        <Text style={styles.label}>2. Pick Document</Text>
-        <TouchableOpacity style={styles.primaryButton} onPress={handlePickDocument} disabled={loading}>
-          <Text style={styles.primaryButtonText}>{loading ? 'Processing...' : 'Select File'}</Text>
-        </TouchableOpacity>
-      </View>
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Text style={[styles.header, { color: colors.text }]}>Import Statement</Text>
+
+      <Text style={[styles.label, { color: colors.text }]}>1. Bank</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+        {BANKS.map(b => chip(b.id, b.name, selectedBank === b.id, () => pickBank(b.id)))}
+      </ScrollView>
+
+      <Text style={[styles.label, { color: colors.text }]}>2. Card</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+        {cards.map(c => chip(c.id, `${c.name}${c.last4 ? ` ••${c.last4}` : ''}`, cardId === c.id, () => (setCardId(c.id), setPlan([]))))}
+        {chip('none', 'Bank account', cardId === null, () => (setCardId(null), setPlan([])))}
+      </ScrollView>
+
+      <TouchableOpacity
+        style={[styles.primaryButton, { backgroundColor: colors.primary }, loading && styles.dimmed]}
+        onPress={handlePickDocument}
+        disabled={loading}
+      >
+        <Text style={styles.primaryButtonText}>{loading ? 'Processing…' : '3. Select statement file'}</Text>
+      </TouchableOpacity>
 
       <View style={styles.previewSection}>
-        <Text style={styles.label}>3. Preview</Text>
-        {previewData.length > 0 ? (
+        {plan.length > 0 ? (
           <>
+            <Text style={[styles.summary, { color: colors.textSecondary }]}>
+              {newCount} new · {plan.length - newCount} already tracked from SMS
+            </Text>
             <FlatList
-              data={previewData}
-              keyExtractor={(item, index) => String(index)}
-              renderItem={renderTransaction}
-              style={styles.list}
+              data={plan}
+              keyExtractor={item => item.id}
+              renderItem={renderRow}
+              style={[styles.list, { backgroundColor: colors.surface, borderColor: colors.border }]}
             />
-            <TouchableOpacity style={styles.successButton} onPress={handleSaveToDb} disabled={loading}>
-              <Text style={styles.primaryButtonText}>Save to Database</Text>
+            <TouchableOpacity
+              style={[styles.primaryButton, { backgroundColor: colors.success }, (loading || newCount === 0) && styles.dimmed]}
+              onPress={handleSave}
+              disabled={loading || newCount === 0}
+            >
+              <Text style={styles.primaryButtonText}>{newCount === 0 ? 'Nothing new to add' : `Add ${newCount} transaction${newCount === 1 ? '' : 's'}`}</Text>
             </TouchableOpacity>
           </>
         ) : (
-          <Text style={styles.emptyText}>No data to preview.</Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            Spends already tracked from SMS are skipped, so importing only fills in what was missed.
+          </Text>
         )}
       </View>
     </View>
@@ -170,36 +237,24 @@ const StatementsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, backgroundColor: '#f9f9f9' },
-  header: { fontSize: 24, fontWeight: 'bold', marginBottom: 20 },
-  label: { fontSize: 16, fontWeight: '600', marginBottom: 8, marginTop: 10 },
-  bankSelector: { marginBottom: 20 },
-  bankButton: { 
-    paddingHorizontal: 16, paddingVertical: 8, 
-    borderRadius: 20, backgroundColor: '#e0e0e0', 
-    marginRight: 10 
-  },
-  bankButtonSelected: { backgroundColor: '#007AFF' },
-  bankButtonText: { color: '#333' },
-  bankButtonTextSelected: { color: '#fff', fontWeight: 'bold' },
-  actionSection: { marginBottom: 20 },
-  primaryButton: {
-    backgroundColor: '#007AFF', padding: 14, borderRadius: 8, alignItems: 'center'
-  },
+  container: { flex: 1, padding: 16 },
+  header: { fontSize: 24, fontWeight: 'bold', marginBottom: 12 },
+  label: { fontSize: 15, fontWeight: '600', marginBottom: 8, marginTop: 8 },
+  chips: { gap: 8, paddingBottom: 8 },
+  chip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7 },
+  chipText: { fontSize: 13, fontWeight: '600' },
+  primaryButton: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 12 },
   primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  successButton: {
-    backgroundColor: '#34C759', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 12
-  },
-  previewSection: { flex: 1 },
-  list: { flex: 1, backgroundColor: '#fff', borderRadius: 8 },
-  txnRow: { 
-    flexDirection: 'row', justifyContent: 'space-between', 
-    padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee' 
-  },
-  merchant: { flex: 1, marginHorizontal: 10, color: '#333' },
-  credit: { color: '#34C759', fontWeight: 'bold' },
-  debit: { color: '#FF3B30', fontWeight: 'bold' },
-  emptyText: { color: '#888', fontStyle: 'italic' }
+  dimmed: { opacity: 0.5 },
+  previewSection: { flex: 1, marginTop: 12 },
+  summary: { fontSize: 13, fontWeight: '600', marginBottom: 8 },
+  list: { flex: 1, borderRadius: 10, borderWidth: 1 },
+  txnRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  txnMain: { flex: 1, marginRight: 10 },
+  merchant: { fontSize: 14, fontWeight: '600' },
+  meta: { fontSize: 12, marginTop: 2 },
+  amount: { fontSize: 14, fontWeight: '700' },
+  emptyText: { fontSize: 13, lineHeight: 19 },
 });
 
 export default StatementsScreen;
