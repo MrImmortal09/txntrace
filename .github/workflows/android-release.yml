@@ -102,6 +102,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The default also installs the legacy 'tools' package, which no longer exists in
+          # cmdline-tools 16+ and makes sdkmanager fail. Gradle fetches platforms/build-tools.
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
 
       - name: Inject Environment Variables
         working-directory: ./app
