@@ -20,6 +20,12 @@ export interface RewardTier {
   /** Once the card's rewarding spend in the cycle passes this, the rest earns acceleratedRate (IDFC Mayura's 10X above ₹20k). */
   accelerateAfter?: number;
   acceleratedRate?: number;
+  /**
+   * Whether this tier's spend counts toward the card's acceleration threshold. Unset = it does if it earns
+   * anything (rate > 0). The accelerating tier itself always counts. Lets the user match the bank's own
+   * rules (e.g. whether rent or utilities count toward Mayura's ₹20k) without guessing on their behalf.
+   */
+  countsTowardThreshold?: boolean;
 }
 
 export interface RewardCap {
@@ -42,6 +48,12 @@ export interface RewardProgram {
   defaultTierId: string;
   tiers: RewardTier[];
   caps: RewardCap[];
+  /**
+   * points only, for a spend that crosses an acceleration threshold: true = floor the whole amount into
+   * blocks once and give the base rate only to the blocks below the threshold; unset/false = floor the
+   * base and accelerated parts separately (can lose a block at the seam).
+   */
+  roundWholeSpend?: boolean;
 }
 
 export interface RewardTxn {
@@ -61,7 +73,7 @@ export interface TxnReward {
   uncappedUnits: number;
   /** ₹ value of units. */
   value: number;
-  /** ₹ of this transaction counted toward the cycle's acceleration threshold — 0 if it earned nothing. */
+  /** ₹ of this transaction counted toward the cycle's acceleration threshold (see countsTowardThreshold). */
   eligibleAmount: number;
   /** ₹ of this transaction that earned the accelerated rate (the part above the threshold); the rest earned the base rate. */
   acceleratedAmount: number;
@@ -137,6 +149,9 @@ export const resolveTier = (program: RewardProgram, txn: Pick<RewardTxn, 'reward
   return program.tiers.find(t => t.id === program.defaultTierId) || program.tiers[0];
 };
 
+export const countsTowardThreshold = (tier: RewardTier): boolean =>
+  !!tier.accelerateAfter || (tier.countsTowardThreshold ?? tier.rate > 0);
+
 const earnUnits = (program: RewardProgram, amount: number, rate: number): number => {
   if (rate <= 0 || amount <= 0) return 0;
   if (program.kind === 'points') {
@@ -179,17 +194,28 @@ export const computeRewards = (
     let eligibleAmount = 0;
     let acceleratedAmount = 0;
 
-    if (!(tier.minAmount && txn.amount < tier.minAmount) && tier.rate > 0) {
+    const meetsMinimum = !(tier.minAmount && txn.amount < tier.minAmount);
+
+    if (meetsMinimum && tier.rate > 0) {
       if (tier.accelerateAfter && tier.acceleratedRate) {
         const before = cycleSpend.get(cycleKey) || 0;
         const basePortion = Math.max(0, Math.min(txn.amount, tier.accelerateAfter - before));
         acceleratedAmount = txn.amount - basePortion;
-        units =
-          earnUnits(program, basePortion, tier.rate) +
-          earnUnits(program, acceleratedAmount, tier.acceleratedRate);
+        if (program.kind === 'points' && program.roundWholeSpend && program.blockSize > 0) {
+          const blocks = Math.floor(txn.amount / program.blockSize);
+          const baseBlocks = Math.min(blocks, Math.floor(basePortion / program.blockSize));
+          units = baseBlocks * tier.rate + (blocks - baseBlocks) * tier.acceleratedRate;
+        } else {
+          units =
+            earnUnits(program, basePortion, tier.rate) +
+            earnUnits(program, acceleratedAmount, tier.acceleratedRate);
+        }
       } else {
         units = earnUnits(program, txn.amount, tier.rate);
       }
+    }
+    // Counted after the split above, which needs the spend as it stood *before* this transaction.
+    if (meetsMinimum && countsTowardThreshold(tier)) {
       eligibleAmount = txn.amount;
       cycleSpend.set(cycleKey, (cycleSpend.get(cycleKey) || 0) + txn.amount);
     }

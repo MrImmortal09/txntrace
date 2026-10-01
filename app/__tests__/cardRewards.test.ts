@@ -195,6 +195,27 @@ describe('computeRewards', () => {
     expect(rewards.get(txns[1].id)!.acceleratedAmount).toBe(0);
   });
 
+  it('lets the user choose which tiers count toward the ₹20k threshold', () => {
+    const mayura = program('idfc_mayura');
+    const txns = [debit(20000, '2026-09-01T10:00:00', 'LANDLORD', 'rent_gov'), debit(3000, '2026-09-02T10:00:00')];
+    // Default: rent earns points, so it counts — the next general spend is all 10X.
+    expect(computeRewards(mayura, 15, txns).get(txns[1].id)!.acceleratedAmount).toBe(3000);
+
+    mayura.tiers.find(t => t.id === 'rent_gov')!.countsTowardThreshold = false;
+    const rewards = computeRewards(mayura, 15, txns);
+    expect(rewards.get(txns[0].id)!.eligibleAmount).toBe(0);
+    expect(rewards.get(txns[0].id)!.units).toBe(399); // still earns its own 3X
+    expect(rewards.get(txns[1].id)!.acceleratedAmount).toBe(0);
+  });
+
+  it('can round a threshold-crossing spend as a whole instead of per part', () => {
+    const mayura = program('idfc_mayura');
+    const txns = [debit(15000, '2026-09-01T10:00:00'), debit(15000, '2026-09-02T10:00:00')];
+    mayura.roundWholeSpend = true;
+    // 100 blocks: 33 below ₹20k at 5X (165) + 67 at 10X (670), vs 825 rounding each part.
+    expect(computeRewards(mayura, 15, txns).get(txns[1].id)!.units).toBe(835);
+  });
+
   it('ignores credits', () => {
     const coral = program('icici_coral');
     const txns = [credit(5000, '2026-09-01T10:00:00', 'Payment received')];

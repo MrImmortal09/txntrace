@@ -15,7 +15,7 @@ import {
 import { useTheme } from '../theme/ThemeProvider';
 import { CreditCard, deleteCreditCard, saveCreditCard } from '../services/creditCards';
 import { REWARD_PRESETS, clonePresetProgram, findPreset } from '../services/rewards/presets';
-import { RewardProgram, RewardTier, effectivePercent } from '../services/rewards/engine';
+import { RewardProgram, RewardTier, accelerationOf, effectivePercent, formatRupees } from '../services/rewards/engine';
 
 interface Props {
   visible: boolean;
@@ -181,6 +181,7 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
 
   const inputStyle = [styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }];
   const liveProgram = program;
+  const acceleration = accelerationOf(liveProgram);
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -277,6 +278,22 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
                     </View>
                   </View>
                 ) : null}
+                {acceleration && liveProgram.kind === 'points' ? (
+                  <View style={[styles.switchRow, styles.switchGap]}>
+                    <View style={styles.flex}>
+                      <Text style={[styles.switchLabel, { color: colors.text }]}>Round the whole spend</Text>
+                      <Text style={[styles.help, styles.noMargin, { color: colors.textSecondary }]}>
+                        When a spend crosses {formatRupees(acceleration.threshold)}: on = round it into ₹{blockSize || '?'} blocks
+                        once; off = round the part below and the part above separately (can lose a few points).
+                      </Text>
+                    </View>
+                    <Switch
+                      value={!!liveProgram.roundWholeSpend}
+                      onValueChange={v => setProgram({ ...liveProgram, roundWholeSpend: v })}
+                      trackColor={{ true: colors.primary, false: colors.border }}
+                    />
+                  </View>
+                ) : null}
                 <View style={styles.switchRow}>
                   <View style={styles.flex}>
                     <Text style={[styles.switchLabel, { color: colors.text }]}>Credited automatically</Text>
@@ -301,43 +318,62 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
                 const pct = rate !== null && liveProgram.kind === 'points'
                   ? effectivePercent({ ...liveProgram, pointValue: numOrNull(pointValue) || 0, blockSize: numOrNull(blockSize) || 0 }, rate)
                   : null;
+                // The accelerating tier always counts toward its own threshold, so it gets no toggle.
+                const showCounts = acceleration && !draft.tier.accelerateAfter;
+                const counts = draft.tier.countsTowardThreshold ?? (rate !== null && rate > 0);
                 return (
-                  <View key={draft.tier.id} style={[styles.tierRow, { backgroundColor: colors.surface, borderColor: isDefault ? colors.primary : colors.border }]}>
-                    <TouchableOpacity
-                      onPress={() => setProgram({ ...liveProgram, defaultTierId: draft.tier.id })}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      accessibilityLabel={isDefault ? 'Default tier' : 'Make default tier'}
-                    >
-                      <Text style={[styles.star, { color: isDefault ? colors.warning : colors.textSecondary }]}>{isDefault ? '★' : '☆'}</Text>
-                    </TouchableOpacity>
-                    <TextInput
-                      style={[styles.tierLabel, { color: colors.text }]}
-                      value={draft.label}
-                      onChangeText={t => updateDraft(index, { label: t })}
-                      placeholder="Category"
-                      placeholderTextColor={colors.textSecondary}
-                      multiline
-                    />
-                    <View style={styles.rateWrap}>
-                      <TextInput
-                        style={[styles.rateInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
-                        value={draft.rate}
-                        onChangeText={t => updateDraft(index, { rate: t })}
-                        keyboardType="decimal-pad"
-                        placeholder="0"
-                        placeholderTextColor={colors.textSecondary}
-                      />
-                      <Text style={[styles.rateUnit, { color: colors.textSecondary }]}>
-                        {liveProgram.kind === 'points' ? (pct !== null ? `≈${Math.round(pct * 100) / 100}%` : 'pts') : '%'}
-                      </Text>
-                    </View>
-                    {!isDefault ? (
-                      <TouchableOpacity onPress={() => removeDraft(index)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Text style={[styles.remove, { color: colors.danger }]}>✕</Text>
+                  <View key={draft.tier.id} style={[styles.tierCard, { backgroundColor: colors.surface, borderColor: isDefault ? colors.primary : colors.border }]}>
+                    <View style={styles.tierRow}>
+                      <TouchableOpacity
+                        onPress={() => setProgram({ ...liveProgram, defaultTierId: draft.tier.id })}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel={isDefault ? 'Default tier' : 'Make default tier'}
+                      >
+                        <Text style={[styles.star, { color: isDefault ? colors.warning : colors.textSecondary }]}>{isDefault ? '★' : '☆'}</Text>
                       </TouchableOpacity>
-                    ) : (
-                      <View style={styles.removeSpacer} />
-                    )}
+                      <TextInput
+                        style={[styles.tierLabel, { color: colors.text }]}
+                        value={draft.label}
+                        onChangeText={t => updateDraft(index, { label: t })}
+                        placeholder="Category"
+                        placeholderTextColor={colors.textSecondary}
+                        multiline
+                      />
+                      <View style={styles.rateWrap}>
+                        <TextInput
+                          style={[styles.rateInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
+                          value={draft.rate}
+                          onChangeText={t => updateDraft(index, { rate: t })}
+                          keyboardType="decimal-pad"
+                          placeholder="0"
+                          placeholderTextColor={colors.textSecondary}
+                        />
+                        <Text style={[styles.rateUnit, { color: colors.textSecondary }]}>
+                          {liveProgram.kind === 'points' ? (pct !== null ? `≈${Math.round(pct * 100) / 100}%` : 'pts') : '%'}
+                        </Text>
+                      </View>
+                      {!isDefault ? (
+                        <TouchableOpacity onPress={() => removeDraft(index)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                          <Text style={[styles.remove, { color: colors.danger }]}>✕</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={styles.removeSpacer} />
+                      )}
+                    </View>
+                    {showCounts ? (
+                      <TouchableOpacity
+                        style={styles.countsRow}
+                        onPress={() => updateDraft(index, { tier: { ...draft.tier, countsTowardThreshold: !counts } })}
+                        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: counts }}
+                      >
+                        <Text style={[styles.countsBox, { color: counts ? colors.success : colors.textSecondary }]}>{counts ? '☑' : '☐'}</Text>
+                        <Text style={[styles.countsText, { color: counts ? colors.text : colors.textSecondary }]}>
+                          Counts toward {formatRupees(acceleration.threshold)}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                 );
               })}
@@ -394,7 +430,12 @@ const styles = StyleSheet.create({
   boxTitle: { fontSize: 15, fontWeight: '700', marginBottom: 10 },
   switchRow: { flexDirection: 'row', alignItems: 'center' },
   switchLabel: { fontSize: 14, fontWeight: '600' },
-  tierRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8, gap: 8 },
+  tierCard: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8 },
+  tierRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  countsRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, marginLeft: 28 },
+  countsBox: { fontSize: 16 },
+  countsText: { fontSize: 12, fontWeight: '600' },
+  switchGap: { marginBottom: 12 },
   star: { fontSize: 20 },
   tierLabel: { flex: 1, fontSize: 14, paddingVertical: 4 },
   rateWrap: { alignItems: 'center' },
