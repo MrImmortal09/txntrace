@@ -21,6 +21,9 @@ import {
   CycleSummary,
   RewardEntry,
   RewardTxn,
+  accelerationOf,
+  formatAcceleratedSplit,
+  formatMultiplier,
   formatRupees,
   formatShortDate,
   formatUnits,
@@ -161,6 +164,42 @@ const CardDetailScreen = () => {
           <Text style={{ color: colors.textSecondary }}>  (edit)</Text>
         </Text>
       </TouchableOpacity>
+    );
+  };
+
+  const acceleration = accelerationOf(program);
+
+  // Progress toward the card's spend-threshold bonus — resets every statement date, not the due date.
+  const renderAcceleration = (c: CycleSummary) => {
+    if (!acceleration || !program) return null;
+    const { threshold, baseRate, acceleratedRate } = acceleration;
+    const reached = c.eligibleSpend >= threshold;
+    const remaining = threshold - c.eligibleSpend;
+    const boosted = formatMultiplier(program, acceleratedRate);
+    const progress = Math.min(1, c.eligibleSpend / threshold);
+    return (
+      <View style={[styles.accel, { borderTopColor: colors.border }]}>
+        <View style={styles.line}>
+          <Text style={[styles.lineLabel, { color: colors.textSecondary }]}>
+            {boosted} threshold ({formatRupees(threshold)})
+          </Text>
+          <Text style={[styles.lineValue, { color: reached ? colors.success : colors.text }]}>
+            {formatRupees(c.eligibleSpend)} / {formatRupees(threshold)}
+          </Text>
+        </View>
+        <View style={[styles.track, { backgroundColor: colors.border }]}>
+          <View style={[styles.fill, { width: `${progress * 100}%`, backgroundColor: reached ? colors.success : colors.primary }]} />
+        </View>
+        <Text style={[styles.muted, { color: reached ? colors.success : colors.textSecondary }]}>
+          {reached
+            ? `${boosted} ${c.isCurrent ? 'unlocked' : 'reached'} — ${formatRupees(c.acceleratedSpend)} earned at ${boosted}${
+                c.isCurrent ? `, and every spend until ${formatShortDate(c.end)} does too` : ''
+              }.`
+            : c.isCurrent
+              ? `Spend ${formatRupees(remaining)} more by ${formatShortDate(c.end)} (statement date) and everything after earns ${boosted} instead of ${formatMultiplier(program, baseRate)}.`
+              : `Fell ${formatRupees(remaining)} short — everything earned ${formatMultiplier(program, baseRate)}.`}
+        </Text>
+      </View>
     );
   };
 
@@ -330,6 +369,7 @@ const CardDetailScreen = () => {
                       {renderCompare(cycle)}
                     </>
                   ) : null}
+                  {renderAcceleration(cycle)}
                 </View>
 
                 {cycle.txns.length === 0 ? (
@@ -340,6 +380,7 @@ const CardDetailScreen = () => {
                   const reward = overview.rewards.get(txn.id);
                   const tier = isDebit && program ? resolveTier(program, txn) : null;
                   const capped = reward && reward.units < reward.uncappedUnits;
+                  const split = tier && program && reward ? formatAcceleratedSplit(program, tier, reward) : null;
                   return (
                     <View key={txn.id} style={[styles.txn, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                       <View style={styles.txnTop}>
@@ -372,6 +413,7 @@ const CardDetailScreen = () => {
                           </Text>
                         </TouchableOpacity>
                       ) : null}
+                      {split ? <Text style={[styles.splitText, { color: colors.success }]}>{split}</Text> : null}
                     </View>
                   );
                 })}
@@ -486,6 +528,10 @@ const styles = StyleSheet.create({
   },
   tierChipText: { fontSize: 12, fontWeight: '600', flex: 1, marginRight: 8 },
   tierEarn: { fontSize: 12, fontWeight: '700' },
+  splitText: { fontSize: 12, fontWeight: '600', marginTop: 6 },
+  accel: { borderTopWidth: 1, marginTop: 10, paddingTop: 8 },
+  track: { height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 4 },
+  fill: { height: 6, borderRadius: 3 },
 });
 
 export default CardDetailScreen;

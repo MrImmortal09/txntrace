@@ -14,7 +14,7 @@ import {
 import { useTheme } from '../theme/ThemeProvider';
 import { openLocationInGoogleMaps } from '../utils/maps';
 import { getTransactionReward, setTransactionRewardTier, TransactionRewardInfo } from '../services/creditCards';
-import { formatTierRate, formatUnits } from '../services/rewards/engine';
+import { formatAcceleratedSplit, formatTierRate, formatUnits } from '../services/rewards/engine';
 import RewardTierPicker from './RewardTierPicker';
 
 export interface TransactionRow {
@@ -74,6 +74,7 @@ const CardRewardRow = ({ transactionId, cardId, amount }: { transactionId: strin
   if (!info) return null;
   const { program, tier, reward, card } = info;
   const capped = reward && reward.units < reward.uncappedUnits;
+  const split = reward ? formatAcceleratedSplit(program, tier, reward) : null;
 
   return (
     <>
@@ -91,6 +92,7 @@ const CardRewardRow = ({ transactionId, cardId, amount }: { transactionId: strin
           <Text style={[styles.rewardTier, { color: colors.text }]} numberOfLines={2}>
             {tier.label} · {formatTierRate(program, tier)} ▾
           </Text>
+          {split ? <Text style={[styles.rewardSplit, { color: colors.success }]}>{split}</Text> : null}
         </View>
         <Text style={[styles.rewardValue, { color: reward && reward.units > 0 ? colors.success : colors.textSecondary }]}>
           {formatUnits(program, reward?.units || 0)}
@@ -381,6 +383,7 @@ const styles = StyleSheet.create({
   },
   rewardTextWrap: { flex: 1, marginRight: 12 },
   rewardTier: { fontSize: 14, fontWeight: '600', marginTop: 4 },
+  rewardSplit: { fontSize: 12, fontWeight: '600', marginTop: 4 },
   rewardValue: { fontSize: 16, fontWeight: '800', textAlign: 'right' },
 
   // Message Card

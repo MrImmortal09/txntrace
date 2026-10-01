@@ -4,6 +4,7 @@ import {
   cycleEndFor,
   cycleStartFor,
   dueDateFor,
+  formatAcceleratedSplit,
   formatTierRate,
   isRefundCredit,
   resolveTier,
@@ -169,6 +170,31 @@ describe('computeRewards', () => {
     expect(rewards.get(txns[1].id)!.units).toBe(825);
   });
 
+  it('reports which part of a Mayura spend crossed ₹20k, resetting each statement cycle', () => {
+    const mayura = program('idfc_mayura');
+    const general = mayura.tiers[0];
+    const txns = [
+      debit(15000, '2026-09-01T10:00:00'),
+      debit(15000, '2026-09-02T10:00:00'), // straddles ₹20k
+      debit(3000, '2026-09-10T10:00:00'), // fully above
+      debit(3000, '2026-09-16T10:00:00'), // next cycle (statement on the 15th) — back to 5X
+    ];
+    const rewards = computeRewards(mayura, 15, txns);
+    const [a, b, c, d] = txns.map(t => rewards.get(t.id)!);
+    expect([a.acceleratedAmount, b.acceleratedAmount, c.acceleratedAmount, d.acceleratedAmount]).toEqual([0, 10000, 3000, 0]);
+    expect(formatAcceleratedSplit(mayura, general, a)).toBeNull();
+    expect(formatAcceleratedSplit(mayura, general, b)).toBe('₹5,000 at 5X + ₹10,000 at 10X');
+    expect(formatAcceleratedSplit(mayura, general, c)).toBe('All at 10X');
+  });
+
+  it('does not count no-reward spends (fuel) toward the ₹20k threshold', () => {
+    const mayura = program('idfc_mayura');
+    const txns = [debit(25000, '2026-09-01T10:00:00', 'HPCL FUEL'), debit(1500, '2026-09-02T10:00:00')];
+    const rewards = computeRewards(mayura, 15, txns);
+    expect(rewards.get(txns[0].id)!.eligibleAmount).toBe(0);
+    expect(rewards.get(txns[1].id)!.acceleratedAmount).toBe(0);
+  });
+
   it('ignores credits', () => {
     const coral = program('icici_coral');
     const txns = [credit(5000, '2026-09-01T10:00:00', 'Payment received')];
@@ -204,6 +230,26 @@ describe('buildCardOverview', () => {
     expect(overview.toPay).toBe(7500);
     expect(overview.current.netSpend).toBe(3000);
     expect(overview.last.expectedValue).toBeCloseTo(600);
+  });
+
+  it('sums ₹20k-threshold progress per cycle', () => {
+    const overview = buildCardOverview({
+      statementDay: 15,
+      dueDay: 5,
+      program: program('idfc_mayura'),
+      txns: [
+        debit(18000, '2026-09-01T10:00:00'), // last cycle
+        debit(7000, '2026-09-10T10:00:00'), // ₹2,000 at 5X + ₹5,000 at 10X
+        debit(12000, '2026-09-20T10:00:00'), // current cycle
+      ],
+      entries: [],
+      billedOverrides: {},
+      today,
+    });
+    expect(overview.last.eligibleSpend).toBe(25000);
+    expect(overview.last.acceleratedSpend).toBe(5000);
+    expect(overview.current.eligibleSpend).toBe(12000);
+    expect(overview.current.acceleratedSpend).toBe(0);
   });
 
   it('prefers a manually entered statement amount', () => {

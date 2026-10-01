@@ -61,6 +61,10 @@ export interface TxnReward {
   uncappedUnits: number;
   /** ₹ value of units. */
   value: number;
+  /** ₹ of this transaction counted toward the cycle's acceleration threshold — 0 if it earned nothing. */
+  eligibleAmount: number;
+  /** ₹ of this transaction that earned the accelerated rate (the part above the threshold); the rest earned the base rate. */
+  acceleratedAmount: number;
 }
 
 // ─── Dates ────────────────────────────────────────────────────────────────
@@ -172,17 +176,21 @@ export const computeRewards = (
 
     const cycleKey = toDateKey(cycleEndFor(day, when));
     let units = 0;
+    let eligibleAmount = 0;
+    let acceleratedAmount = 0;
 
     if (!(tier.minAmount && txn.amount < tier.minAmount) && tier.rate > 0) {
       if (tier.accelerateAfter && tier.acceleratedRate) {
         const before = cycleSpend.get(cycleKey) || 0;
         const basePortion = Math.max(0, Math.min(txn.amount, tier.accelerateAfter - before));
+        acceleratedAmount = txn.amount - basePortion;
         units =
           earnUnits(program, basePortion, tier.rate) +
-          earnUnits(program, txn.amount - basePortion, tier.acceleratedRate);
+          earnUnits(program, acceleratedAmount, tier.acceleratedRate);
       } else {
         units = earnUnits(program, txn.amount, tier.rate);
       }
+      eligibleAmount = txn.amount;
       cycleSpend.set(cycleKey, (cycleSpend.get(cycleKey) || 0) + txn.amount);
     }
 
@@ -203,10 +211,24 @@ export const computeRewards = (
       units,
       uncappedUnits,
       value: program.kind === 'points' ? units * program.pointValue : units,
+      eligibleAmount,
+      acceleratedAmount,
     });
   }
 
   return results;
+};
+
+export interface Acceleration {
+  threshold: number;
+  baseRate: number;
+  acceleratedRate: number;
+}
+
+/** The card's spend-threshold bonus (IDFC Mayura: 5X → 10X past ₹20k a cycle), if it has one. */
+export const accelerationOf = (program: RewardProgram | null): Acceleration | null => {
+  const tier = program?.tiers.find(t => t.accelerateAfter && t.acceleratedRate);
+  return tier ? { threshold: tier.accelerateAfter!, baseRate: tier.rate, acceleratedRate: tier.acceleratedRate! } : null;
 };
 
 // ─── Dues & cycle summaries ───────────────────────────────────────────────
@@ -246,6 +268,10 @@ export interface CycleSummary {
   netSpend: number;
   expectedUnits: number;
   expectedValue: number;
+  /** Rewarding spend counted toward the acceleration threshold (see accelerationOf). */
+  eligibleSpend: number;
+  /** Part of eligibleSpend that earned the accelerated rate. */
+  acceleratedSpend: number;
   /** Logged actual reward for this cycle, null if nothing logged yet. */
   receivedUnits: number | null;
   txns: RewardTxn[];
@@ -310,6 +336,8 @@ export const buildCardOverview = ({
         netSpend: 0,
         expectedUnits: 0,
         expectedValue: 0,
+        eligibleSpend: 0,
+        acceleratedSpend: 0,
         receivedUnits: null,
         txns: [],
       };
@@ -334,6 +362,8 @@ export const buildCardOverview = ({
       if (reward) {
         cycle.expectedUnits += reward.units;
         cycle.expectedValue += reward.value;
+        cycle.eligibleSpend += reward.eligibleAmount;
+        cycle.acceleratedSpend += reward.acceleratedAmount;
       }
     } else if (isRefundCredit(txn)) {
       cycle.refunds += txn.amount;
@@ -405,6 +435,18 @@ export const formatTierRate = (program: RewardProgram, tier: RewardTier): string
   if (tier.rate <= 0) return '0%';
   if (program.kind === 'cashback') return `${trimNumber(tier.rate)}%`;
   return `${trimNumber(tier.rate)} pts/₹${program.blockSize} (≈${trimNumber(effectivePercent(program, tier.rate))}%)`;
+};
+
+/** "10X" for points (the card's own multiplier naming), "5%" for cashback. */
+export const formatMultiplier = (program: RewardProgram, rate: number): string =>
+  program.kind === 'points' ? `${trimNumber(rate)}X` : `${trimNumber(rate)}%`;
+
+/** "₹4,000 at 5X + ₹6,000 at 10X" — null when the transaction didn't touch the accelerated rate. */
+export const formatAcceleratedSplit = (program: RewardProgram, tier: RewardTier, reward: TxnReward): string | null => {
+  if (!tier.acceleratedRate || reward.acceleratedAmount <= 0) return null;
+  const base = reward.eligibleAmount - reward.acceleratedAmount;
+  const accelerated = `${formatRupees(reward.acceleratedAmount)} at ${formatMultiplier(program, tier.acceleratedRate)}`;
+  return base > 0 ? `${formatRupees(base)} at ${formatMultiplier(program, tier.rate)} + ${accelerated}` : `All at ${formatMultiplier(program, tier.acceleratedRate)}`;
 };
 
 export const daysUntil = (d: Date, today: Date = new Date()): number =>
