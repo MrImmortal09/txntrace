@@ -46,10 +46,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: app/package-lock.json
 
-      - name: Install npm Dependencies
-        working-directory: ./app
-        run: npm ci
-
       - name: Configure Git
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bump_type != '' && github.event.inputs.bump_type != 'none' }}
         run: |
@@ -60,16 +56,36 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bump_type != '' && github.event.inputs.bump_type != 'none' }}
         working-directory: ./app
         id: version_bump
+        env:
+          BUMP_TYPE: ${{ github.event.inputs.bump_type }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           set -e
-          npm version ${{ github.event.inputs.bump_type }} --no-git-tag-version
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-          git add package.json package-lock.json
-          git commit -m "chore(release): bump iOS version to v$NEW_VERSION"
-          git tag "v$NEW_VERSION"
-          git push origin HEAD:${{ github.ref_name }}
-          git push origin --tags
+          # The Android and iOS release workflows can run at the same time and both push a
+          # bump commit, so always bump on top of the latest remote branch and retry if the
+          # push loses the race. Branch and tag are pushed atomically so neither lands alone.
+          for attempt in 1 2 3 4 5; do
+            git fetch --force --tags origin "$BRANCH"
+            git reset --hard "origin/$BRANCH"
+            npm version "$BUMP_TYPE" --no-git-tag-version
+            NEW_VERSION=$(node -p "require('./package.json').version")
+            git add package.json package-lock.json
+            git commit -m "chore(release): bump iOS version to v$NEW_VERSION"
+            git tag "v$NEW_VERSION"
+            if git push --atomic origin "HEAD:$BRANCH" "refs/tags/v$NEW_VERSION"; then
+              echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt), retrying on top of latest $BRANCH..."
+            git tag -d "v$NEW_VERSION"
+            sleep $((attempt * 5))
+          done
+          echo "Failed to push version bump after 5 attempts" >&2
+          exit 1
+
+      - name: Install npm Dependencies
+        working-directory: ./app
+        run: npm ci
 
       - name: Determine Current Version
         run: |

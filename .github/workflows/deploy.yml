@@ -6,6 +6,11 @@ on:
     paths:
       - "server/**"
       - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
 
 jobs:
   deploy:
