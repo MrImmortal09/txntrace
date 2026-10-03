@@ -18,9 +18,22 @@ import {
   getAuthToken,
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
-import { checkAndEnforceImmediateUpdate } from '../services/playStoreUpdate';
+import { checkForAppUpdate, useUpdateStatus } from '../services/playStoreUpdate';
 import { useTheme } from '../theme/ThemeProvider';
 import { OTPLoginModal } from '../components/OTPLoginModal';
+
+// Subscribes on its own so download progress doesn't re-render the whole screen
+const UpdateStatusHint = () => {
+  const { colors } = useTheme();
+  const status = useUpdateStatus();
+  const text =
+    status.phase === 'ready'
+      ? 'Update downloaded. It installs when your phone is idle.'
+      : status.phase === 'downloading'
+        ? `Downloading update${status.percent != null ? ` (${status.percent}%)` : ''}...`
+        : 'Updates download in the background and install when your phone is idle.';
+  return <Text style={[styles.hint, { color: colors.textSecondary }]}>{text}</Text>;
+};
 
 const SettingsScreen = () => {
   const navigation = useNavigation<any>();
@@ -441,7 +454,7 @@ const SettingsScreen = () => {
       {Platform.OS === 'android' && (
         <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>App Updates</Text>
-          <Text style={[styles.hint, { color: colors.textSecondary }]}>Google Play Store In-App Updates</Text>
+          <UpdateStatusHint />
           <TouchableOpacity
             style={[
               styles.button,
@@ -452,7 +465,7 @@ const SettingsScreen = () => {
             onPress={async () => {
               setCheckingUpdates(true);
               try {
-                await checkAndEnforceImmediateUpdate({ manual: true });
+                await checkForAppUpdate({ manual: true });
               } finally {
                 setCheckingUpdates(false);
               }

@@ -23,6 +23,18 @@ on:
         - alpha
         - beta
         - production
+      update_priority:
+        description: 'In-app update priority: 0-3 updates quietly in the background, 4-5 forces the update on launch'
+        required: true
+        default: '0'
+        type: choice
+        options:
+        - '0'
+        - '1'
+        - '2'
+        - '3'
+        - '4'
+        - '5'
 
 jobs:
   release:
@@ -187,4 +199,5 @@ jobs:
           packageName: com.chanakya.txntrace
           releaseFiles: app/android/app/build/outputs/bundle/release/app-release.aab
           track: ${{ github.event.inputs.track }}
+          inAppUpdatePriority: ${{ github.event.inputs.update_priority }}
           status: completed

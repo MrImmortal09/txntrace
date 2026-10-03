@@ -36,7 +36,11 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
     @Volatile
     private var pendingUpdatePromise: Promise? = null
 
+    // Whether UpdateInstallJobService has been asked to install the update currently coming down
+    private var installScheduled = false
+
     private val installStateUpdatedListener = InstallStateUpdatedListener { state: InstallState ->
+        scheduleInstallIfPending(state.installStatus())
         val params = Arguments.createMap().apply {
             putInt("installStatus", state.installStatus())
             putInt("installErrorCode", state.installErrorCode())
@@ -66,6 +70,23 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    /**
+     * A flexible update that is downloading or downloaded is installed by [UpdateInstallJobService]
+     * once the phone is idle. Scheduled once per download, since rescheduling restarts its timers.
+     */
+    private fun scheduleInstallIfPending(installStatus: Int) {
+        val pending = installStatus == InstallStatus.PENDING ||
+            installStatus == InstallStatus.DOWNLOADING ||
+            installStatus == InstallStatus.DOWNLOADED
+        if (pending && !installScheduled) {
+            try {
+                UpdateInstallJobService.schedule(reactContext)
+            } catch (ignored: Exception) {
+            }
+        }
+        installScheduled = pending
+    }
+
     @ReactMethod
     fun addListener(eventName: String) {
         // Required for RN built-in Event Emitter Calls.
@@ -89,6 +110,9 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
         try {
             appUpdateManager.appUpdateInfo
                 .addOnSuccessListener { info: AppUpdateInfo ->
+                    // The listener only reports changes, so pick up a download that got going
+                    // while the app wasn't running.
+                    scheduleInstallIfPending(info.installStatus())
                     val result = Arguments.createMap().apply {
                         val isAvailable =
                             info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
@@ -100,6 +124,8 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
                         putBoolean("developerTriggeredUpdateInProgress", inProgress)
                         putInt("availableVersionCode", info.availableVersionCode())
                         putInt("installStatus", info.installStatus())
+                        putDouble("bytesDownloaded", info.bytesDownloaded().toDouble())
+                        putDouble("totalBytesToDownload", info.totalBytesToDownload().toDouble())
                         putBoolean(
                             "immediateAllowed",
                             info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
@@ -304,6 +330,10 @@ class PlayStoreUpdateModule(private val reactContext: ReactApplicationContext) :
 
             when (resultCode) {
                 Activity.RESULT_OK -> {
+                    if (!isImmediate) {
+                        // Download accepted; the app may be closed before Play's first progress event
+                        scheduleInstallIfPending(InstallStatus.PENDING)
+                    }
                     p?.resolve(true)
                     sendEvent(eventName, Arguments.createMap().apply {
                         putString("status", "RESULT_OK")

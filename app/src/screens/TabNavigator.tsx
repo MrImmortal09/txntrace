@@ -1,10 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createBottomTabNavigator, BottomTabBar, BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Circle, Rect, Polyline, Line } from 'react-native-svg';
 import { useTheme } from '../theme/ThemeProvider';
+import { UpdateBanner } from '../components/UpdateBanner';
 
 import StatementsScreen from './StatementsScreen';
 import HomeScreen from './HomeScreen';
@@ -48,6 +49,13 @@ const IconMore = ({ color }: { color: string }) => (
   <Svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><Circle cx="12" cy="12" r="1"></Circle><Circle cx="19" cy="12" r="1"></Circle><Circle cx="5" cy="12" r="1"></Circle></Svg>
 );
 
+const renderTabBar = (props: BottomTabBarProps) => (
+  <>
+    <UpdateBanner />
+    <BottomTabBar {...props} />
+  </>
+);
+
 export const TabNavigator = () => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -56,6 +64,7 @@ export const TabNavigator = () => {
 
   return (
     <Tab.Navigator
+      tabBar={renderTabBar}
       screenOptions={({ route }) => ({
         headerStyle: { backgroundColor: colors.background, shadowColor: 'transparent', elevation: 0 },
         headerTintColor: colors.text,

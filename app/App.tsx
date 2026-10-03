@@ -9,7 +9,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { TabNavigator } from './src/screens/TabNavigator';
 import { setupDatabase } from './src/db/schema';
 import { checkNewMessages } from './src/services/smsIngest';
-import { checkAndEnforceImmediateUpdate } from './src/services/playStoreUpdate';
+import { checkForAppUpdate } from './src/services/playStoreUpdate';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 
@@ -19,11 +19,11 @@ function MainApp() {
   const [smsError, setSmsError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check for mandatory Google Play updates on launch and foreground resume
-    checkAndEnforceImmediateUpdate();
+    // Check for Google Play updates on launch and foreground resume
+    checkForAppUpdate();
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
-        checkAndEnforceImmediateUpdate();
+        checkForAppUpdate();
       }
     });
     return () => {

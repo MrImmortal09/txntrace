@@ -6,6 +6,24 @@ import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
 
 class SmsHeadlessTaskService : HeadlessJsTaskService() {
+
+    companion object {
+        /** True from an SMS arriving until its JS task has finished; the service stops itself then. */
+        @Volatile
+        var isRunning = false
+            private set
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        isRunning = true
+    }
+
+    override fun onDestroy() {
+        isRunning = false
+        super.onDestroy()
+    }
+
     override fun getTaskConfig(intent: Intent?): HeadlessJsTaskConfig? {
         val extras = intent?.extras ?: return null
         
