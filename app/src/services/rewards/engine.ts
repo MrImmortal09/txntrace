@@ -245,6 +245,25 @@ export const computeRewards = (
   return results;
 };
 
+/**
+ * What one transaction would earn on each of the card's tiers, valued against the card's full history so caps
+ * and the acceleration threshold still apply — the Review screen's tier chips. Only this transaction is re-tiered.
+ */
+export const rewardsByTier = (
+  program: RewardProgram,
+  statementDay: number | null,
+  txns: RewardTxn[],
+  txnId: string
+): Map<string, TxnReward> => {
+  const byTier = new Map<string, TxnReward>();
+  for (const tier of program.tiers) {
+    const retiered = txns.map(t => (t.id === txnId ? { ...t, reward_tier: tier.id } : t));
+    const reward = computeRewards(program, statementDay, retiered).get(txnId);
+    if (reward) byTier.set(tier.id, reward);
+  }
+  return byTier;
+};
+
 export interface Acceleration {
   threshold: number;
   baseRate: number;

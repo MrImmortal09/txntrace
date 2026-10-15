@@ -87,6 +87,30 @@ describe('SMS Ingestion and Batch Processing', () => {
     expect(logInsert!.params[5]).toBe('parsed');
   });
 
+  it('links an HDFC card alert with bare digits to that card, among several cards', async () => {
+    mockCards = [
+      { id: 'card_sbi', last4: '9684', custom_pattern: null },
+      { id: 'card_hdfc', last4: '0904', custom_pattern: null },
+      { id: 'card_icici', last4: '3008', custom_pattern: null },
+    ];
+    await processSMSBatch([
+      {
+        id: 'msg-hdfc-0904',
+        sender: 'AD-HDFCBK',
+        body: 'Spent Rs.460 On HDFC Bank Card 0904 At PTM*SWIGGY IN On 2026-10-12:01:55:33.Not You? To Block+Reissue Call 18002586161/SMS BLOCK CC 0904 to 7308080808',
+        receivedAt: '2026-10-12T01:55:40.000Z',
+      },
+    ]);
+
+    const txnInsert = mockExecutedQueries.find(e => e.query.includes('INSERT OR IGNORE INTO transactions'));
+    expect(txnInsert).toBeDefined();
+    const params = txnInsert!.params;
+    expect(params[2]).toBe(460);
+    expect(params[3]).toBe('debit');
+    expect(params[4]).toBe('PTM*SWIGGY IN');
+    expect(params[10]).toBe('card_hdfc');
+  });
+
   it('extracts sender from prefix when sender parameter is empty', async () => {
     const rawSms = [
       {

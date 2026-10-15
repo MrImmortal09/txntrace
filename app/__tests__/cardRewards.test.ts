@@ -8,6 +8,7 @@ import {
   formatTierRate,
   isRefundCredit,
   resolveTier,
+  rewardsByTier,
   RewardTxn,
   toDateKey,
 } from '../src/services/rewards/engine';
@@ -220,6 +221,20 @@ describe('computeRewards', () => {
     const coral = program('icici_coral');
     const txns = [credit(5000, '2026-09-01T10:00:00', 'Payment received')];
     expect(computeRewards(coral, 15, txns).size).toBe(0);
+  });
+});
+
+describe('rewardsByTier', () => {
+  it('values one spend on every tier, honouring minimums and what the cycle has already used of a cap', () => {
+    const swiggy = program('hdfc_swiggy_blck');
+    const earlier = debit(14800, '2026-10-02T10:00:00', 'SWIGGY'); // 10% = 1480 of the 1500 Swiggy cap
+    const spend = debit(460, '2026-10-12T01:55:00', 'PTM*SWIGGY IN');
+    const byTier = rewardsByTier(swiggy, 15, [earlier, spend], spend.id);
+    expect(byTier.get('swiggy')!.uncappedUnits).toBeCloseTo(46);
+    expect(byTier.get('swiggy')!.units).toBeCloseTo(20); // only ₹20 of the cap left this cycle
+    expect(byTier.get('other')!.units).toBeCloseTo(4.6);
+    expect(byTier.get('excluded')!.units).toBe(0);
+    expect(byTier.size).toBe(swiggy.tiers.length);
   });
 });
 

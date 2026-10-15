@@ -10,6 +10,7 @@ import { TabNavigator } from './src/screens/TabNavigator';
 import { setupDatabase } from './src/db/schema';
 import { checkNewMessages } from './src/services/smsIngest';
 import { checkForAppUpdate } from './src/services/playStoreUpdate';
+import { rematchAfterMatcherUpdate } from './src/services/creditCards';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 
@@ -50,6 +51,8 @@ function MainApp() {
       try {
         await requestPermissions();
         await setupDatabase();
+        // Not fatal: unlinked spends just stay unlinked until a card is re-saved.
+        await rematchAfterMatcherUpdate().catch(e => console.error('Failed to rematch card transactions:', e));
         setDbInitialized(true);
       } catch (error) {
         console.error('Failed to initialize database:', error);

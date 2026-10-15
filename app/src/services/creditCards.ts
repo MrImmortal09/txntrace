@@ -1,4 +1,5 @@
 import { db } from '../db/schema';
+import { getSetting, setSetting } from './appSettings';
 import { Card, matchCard } from './cardMatching';
 import {
   buildCardOverview,
@@ -87,6 +88,18 @@ export const rematchCardTransactions = async (resetCardId?: string): Promise<num
     }
   }
   return matched;
+};
+
+// Bump whenever matchCard/extractLast4 learns a new SMS format (v2: bare "HDFC
+// Bank Card 0904"), so spends that arrived before the update get linked on the
+// next launch instead of waiting for the user to re-save every card.
+const CARD_MATCHER_VERSION = '2';
+const CARD_MATCHER_KEY = 'card_matcher_version';
+
+export const rematchAfterMatcherUpdate = async (): Promise<void> => {
+  if ((await getSetting(CARD_MATCHER_KEY)) === CARD_MATCHER_VERSION) return;
+  await rematchCardTransactions();
+  await setSetting(CARD_MATCHER_KEY, CARD_MATCHER_VERSION);
 };
 
 export const saveCreditCard = async (input: CreditCardInput): Promise<string> => {
@@ -255,6 +268,18 @@ export const setReceivedReward = async (card: CreditCard, cycleKey: string, unit
 
 export const deleteRewardEntry = async (id: string) => {
   await db.execute('DELETE FROM reward_entries WHERE id = ?', [id]);
+};
+
+export interface CardRewardContext {
+  card: CreditCard;
+  /** Everything on the card, for reward math that has to honour caps and thresholds. */
+  txns: RewardTxn[];
+}
+
+/** Null when the card row is gone (deleted since the transaction was linked). */
+export const loadCardRewardContext = async (cardId: string): Promise<CardRewardContext | null> => {
+  const card = await getCreditCard(cardId);
+  return card ? { card, txns: await loadCardTxns(card.id) } : null;
 };
 
 export interface TransactionRewardInfo {
