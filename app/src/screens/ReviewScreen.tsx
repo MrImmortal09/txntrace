@@ -11,22 +11,11 @@ import {
 import { checkNewMessages } from '../services/smsIngest';
 import { openLocationInGoogleMaps } from '../utils/maps';
 import { useTheme } from '../theme/ThemeProvider';
+import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
 
 const SWIPE_THRESHOLD = 100;
 
-interface Transaction {
-  id: string;
-  bank: string;
-  amount: number;
-  type: string;
-  merchant_raw: string;
-  date: string;
-  category?: string;
-  note?: string;
-  location?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
-}
+type Transaction = TransactionRow;
 
 interface Category {
   id: string;
@@ -44,6 +33,8 @@ const ReviewScreen = () => {
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [detailTxn, setDetailTxn] = useState<Transaction | null>(null);
+  const currentIdRef = useRef<string | null>(null);
 
   const formatTxnDateTime = (dateStr?: string | null) => {
     if (!dateStr) return '';
@@ -69,38 +60,21 @@ const ReviewScreen = () => {
   const [selectedContacts, setSelectedContacts] = useState<SplitContact[]>([]);
 
   const pan = useRef(new Animated.ValueXY()).current;
-  const isAdvancingRef = useRef(false);
-  const ignoringCardTapUntilRef = useRef<number>(0);
-  const lastCardTapRef = useRef<number>(0);
-  const cardTapTimerRef = useRef<any>(null);
+  const isAnimatingRef = useRef(false);
+
+  const currentTxn = txns[currentIndex];
 
   useEffect(() => {
-    return () => {
-      if (cardTapTimerRef.current) clearTimeout(cardTapTimerRef.current);
-    };
-  }, []);
+    currentIdRef.current = currentTxn?.id ?? null;
+  }, [currentTxn?.id]);
 
-  const handleCardPress = () => {
-    if (isAdvancingRef.current) return;
-    const now = Date.now();
-    if (now < ignoringCardTapUntilRef.current) return;
-
-    const DOUBLE_TAP_DELAY = 280;
-    if (now - lastCardTapRef.current < DOUBLE_TAP_DELAY) {
-      if (cardTapTimerRef.current) {
-        clearTimeout(cardTapTimerRef.current);
-        cardTapTimerRef.current = null;
-      }
-      lastCardTapRef.current = 0;
-      ignoringCardTapUntilRef.current = now + 800;
-      advance(1);
-    } else {
-      lastCardTapRef.current = now;
-      cardTapTimerRef.current = setTimeout(() => {
-        lastCardTapRef.current = 0;
-      }, DOUBLE_TAP_DELAY);
-    }
-  };
+  // The form belongs to whichever card is showing — browsing to another card
+  // (or the queue reloading underneath) starts it fresh.
+  useEffect(() => {
+    setSelectedCategoryId(null);
+    setNote('');
+    setSelectedContacts([]);
+  }, [currentTxn?.id]);
 
   const loadData = useCallback(async () => {
     try {
@@ -110,7 +84,12 @@ const ReviewScreen = () => {
 
       const txnRes = await db.execute('SELECT * FROM transactions WHERE reviewed = 0 ORDER BY date DESC');
       const txnRows: any = txnRes.rows;
-      setTxns(txnRows?._array || txnRows || []);
+      const rows: Transaction[] = txnRows?._array || txnRows || [];
+      setTxns(rows);
+      // Stay on the card you were looking at — new SMS landing on refocus
+      // shifts everything after it down the list.
+      const keepIndex = rows.findIndex(t => t.id === currentIdRef.current);
+      setCurrentIndex(i => (keepIndex >= 0 ? keepIndex : Math.max(0, Math.min(i, rows.length - 1))));
     } catch (error) {
       console.error(error);
     }
@@ -133,18 +112,16 @@ const ReviewScreen = () => {
     };
   }, [loadData]);
 
-  const handleCardChange = (index: number) => {
-    setCurrentIndex(index);
-    setSelectedCategoryId(null);
-    setNote('');
-    setSelectedContacts([]);
+  // Reviewed cards leave the queue, so the card behind slides into the same
+  // index (wrapping to the start if it was the last one).
+  const removeFromQueue = (id: string) => {
+    const remaining = txns.filter(t => t.id !== id);
+    setTxns(remaining);
+    setCurrentIndex(i => (remaining.length ? i % remaining.length : 0));
     pan.setValue({ x: 0, y: 0 });
   };
 
-  const handleReview = async (index: number) => {
-    const txn = txns[index];
-    if (!txn) return;
-
+  const handleReview = async (txn: Transaction) => {
     try {
       await db.execute(
         'UPDATE transactions SET category = ?, note = ?, reviewed = 1, needs_contact_match = 0, updated_at = ? WHERE id = ?',
@@ -166,20 +143,52 @@ const ReviewScreen = () => {
   // takes its share — the oversized invisible layer swallowed taps meant for
   // that form. A single plain-PanResponder card, same pattern as
   // SwipeableRow, doesn't have that problem since it's sized by normal flow.
-  const advance = (direction: 1 | -1 = 1) => {
-    if (isAdvancingRef.current) return;
-    isAdvancingRef.current = true;
+  const reviewAndNext = () => {
+    const txn = txns[currentIndex];
+    if (!txn || isAnimatingRef.current) return;
+    isAnimatingRef.current = true;
     Animated.timing(pan, {
-      toValue: { x: direction * 500, y: 0 },
+      toValue: { x: 500, y: 0 },
       duration: 200,
       useNativeDriver: false,
     }).start(() => {
-      const index = currentIndex;
-      handleReview(index);
-      handleCardChange(index + 1);
-      isAdvancingRef.current = false;
+      handleReview(txn);
+      removeFromQueue(txn.id);
+      isAnimatingRef.current = false;
     });
   };
+
+  const springBack = () => {
+    Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+  };
+
+  // Swiping only browses the queue (left = next, right = previous) — nothing
+  // is marked reviewed until Review & Next, so a run of careless flicks can't
+  // clear every pending transaction.
+  const browse = (step: 1 | -1) => {
+    if (isAnimatingRef.current) return;
+    if (txns.length < 2) {
+      springBack();
+      return;
+    }
+    isAnimatingRef.current = true;
+    const exitX = -step * 500;
+    Animated.timing(pan, { toValue: { x: exitX, y: 0 }, duration: 180, useNativeDriver: false }).start(() => {
+      setCurrentIndex(i => (i + step + txns.length) % txns.length);
+      // The incoming card enters from the opposite edge.
+      pan.setValue({ x: -exitX, y: 0 });
+      Animated.timing(pan, { toValue: { x: 0, y: 0 }, duration: 180, useNativeDriver: false }).start(() => {
+        isAnimatingRef.current = false;
+      });
+    });
+  };
+
+  // The PanResponder is created once, so it reaches the latest render's
+  // browse() through a ref rather than the stale first-render closure.
+  const browseRef = useRef(browse);
+  useEffect(() => {
+    browseRef.current = browse;
+  });
 
   const panResponder = useRef(
     PanResponder.create({
@@ -190,11 +199,12 @@ const ReviewScreen = () => {
       },
       onPanResponderRelease: (_, gesture) => {
         if (Math.abs(gesture.dx) > SWIPE_THRESHOLD) {
-          advance(gesture.dx > 0 ? 1 : -1);
+          browseRef.current(gesture.dx < 0 ? 1 : -1);
         } else {
-          Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+          springBack();
         }
       },
+      onPanResponderTerminate: () => springBack(),
     })
   ).current;
 
@@ -249,7 +259,7 @@ const ReviewScreen = () => {
       const result = await autoMatchCreditTransaction(txn);
       if (result.matched) {
         Alert.alert('Auto-Matched', `Matched to ${result.contactName}`);
-        handleCardChange(currentIndex + 1);
+        removeFromQueue(txn.id);
         return;
       }
     } catch (err) {
@@ -259,7 +269,6 @@ const ReviewScreen = () => {
   };
 
   const toggleContactSelection = async (contact: any) => {
-    const currentTxn = txns[currentIndex];
     if (currentTxn && currentTxn.type === 'credit') {
       const name = nameOfContact(contact);
       try {
@@ -274,7 +283,7 @@ const ReviewScreen = () => {
         console.error('Failed to match credit:', err);
       }
       setSplitModalVisible(false);
-      handleCardChange(currentIndex + 1);
+      removeFromQueue(currentTxn.id);
       return;
     }
 
@@ -298,9 +307,7 @@ const ReviewScreen = () => {
     setSelectedContacts(newSelection);
   };
 
-  const currentTxn = txns[currentIndex];
-
-  if (txns.length === 0 || currentIndex >= txns.length) {
+  if (!currentTxn) {
     return (
       <View style={[styles.center, { backgroundColor: colors.background }]}>
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>All caught up! No transactions to review.</Text>
@@ -311,6 +318,9 @@ const ReviewScreen = () => {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.swiperContainer}>
+        <Text style={[styles.position, { color: colors.textSecondary }]}>
+          {currentIndex + 1} of {txns.length}
+        </Text>
         {currentTxn && (
           <Animated.View
             style={[
@@ -324,6 +334,7 @@ const ReviewScreen = () => {
                     rotate: pan.x.interpolate({
                       inputRange: [-200, 0, 200],
                       outputRange: ['-10deg', '0deg', '10deg'],
+                      extrapolate: 'clamp',
                     }),
                   },
                 ],
@@ -333,7 +344,7 @@ const ReviewScreen = () => {
           >
             <TouchableOpacity
               activeOpacity={0.95}
-              onPress={handleCardPress}
+              onPress={() => setDetailTxn(currentTxn)}
               style={styles.cardInnerTouchable}
             >
               <Text style={[styles.cardBank, { color: colors.textSecondary }]}>{currentTxn.bank}</Text>
@@ -347,11 +358,7 @@ const ReviewScreen = () => {
               {currentTxn.location ? (
                 <TouchableOpacity
                   style={[styles.cardLocation, { backgroundColor: colors.background, borderColor: colors.border }]}
-                  onPress={(e) => {
-                    e.stopPropagation?.();
-                    ignoringCardTapUntilRef.current = Date.now() + 600;
-                    openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude);
-                  }}
+                  onPress={() => openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude)}
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.cardLocationText, { color: colors.primary }]}>
@@ -409,10 +416,7 @@ const ReviewScreen = () => {
                   <Text style={styles.splitButtonText}>For a Friend</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.reviewButton}
-                  onPress={() => advance(1)}
-                >
+                <TouchableOpacity style={styles.reviewButton} onPress={reviewAndNext}>
                   <Text style={styles.reviewButtonText}>Mark as Mine</Text>
                 </TouchableOpacity>
               </>
@@ -422,10 +426,7 @@ const ReviewScreen = () => {
                   <Text style={styles.splitButtonText}>Split this ({selectedContacts.length})</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.reviewButton}
-                  onPress={() => advance(1)}
-                >
+                <TouchableOpacity style={styles.reviewButton} onPress={reviewAndNext}>
                   <Text style={styles.reviewButtonText}>Review & Next</Text>
                 </TouchableOpacity>
               </>
@@ -504,6 +505,7 @@ const ReviewScreen = () => {
         </SafeAreaView>
       </Modal>
 
+      <TransactionDetailModal transaction={detailTxn} onClose={() => setDetailTxn(null)} />
     </SafeAreaView>
   );
 };
@@ -513,6 +515,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18 },
   swiperContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  position: { fontSize: 13, marginBottom: 12 },
   card: {
     width: '88%',
     height: 300,
