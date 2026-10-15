@@ -482,6 +482,14 @@ export const formatTierRate = (program: RewardProgram, tier: RewardTier): string
   return `${trimNumber(tier.rate)} pts/₹${program.blockSize} (≈${trimNumber(effectivePercent(program, tier.rate))}%)`;
 };
 
+/** Compact enough for a chip: "10%" for cashback, "≈0.83%" for points. */
+export const formatShortRate = (program: RewardProgram, tier: RewardTier): string => {
+  if (tier.rate <= 0) return '0%';
+  return program.kind === 'cashback'
+    ? `${trimNumber(tier.rate)}%`
+    : `≈${trimNumber(effectivePercent(program, tier.rate))}%`;
+};
+
 /** "10X" for points (the card's own multiplier naming), "5%" for cashback. */
 export const formatMultiplier = (program: RewardProgram, rate: number): string =>
   program.kind === 'points' ? `${trimNumber(rate)}X` : `${trimNumber(rate)}%`;

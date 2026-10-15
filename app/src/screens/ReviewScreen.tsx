@@ -9,16 +9,13 @@ import {
   matchCreditToContact,
 } from '../services/settlements';
 import { checkNewMessages } from '../services/smsIngest';
-import { CardRewardContext, loadCardRewardContext, setTransactionRewardTier } from '../services/creditCards';
 import {
-  effectivePercent,
-  formatTierRate,
-  formatUnits,
-  resolveTier,
-  rewardsByTier,
-  RewardProgram,
-  RewardTier,
-} from '../services/rewards/engine';
+  CardRewardContext,
+  loadCardRewardContext,
+  rewardInfoFor,
+  setTransactionRewardTier,
+} from '../services/creditCards';
+import { formatShortRate, formatUnits } from '../services/rewards/engine';
 import { openLocationInGoogleMaps } from '../utils/maps';
 import { useTheme } from '../theme/ThemeProvider';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
@@ -37,12 +34,6 @@ interface SplitContact {
   name: string;
   amountOwed: number;
 }
-
-/** Short enough for a chip: "10%" for cashback, "≈0.83%" for points (formatTierRate's full form is too long). */
-const chipRate = (program: RewardProgram, tier: RewardTier): string => {
-  if (program.kind === 'cashback') return formatTierRate(program, tier);
-  return tier.rate > 0 ? `≈${Math.round(effectivePercent(program, tier.rate) * 100) / 100}%` : '0%';
-};
 
 const ReviewScreen = () => {
   const { colors } = useTheme();
@@ -75,9 +66,17 @@ const ReviewScreen = () => {
   const [contactRecency, setContactRecency] = useState<Record<string, string>>({});
   const [selectedContacts, setSelectedContacts] = useState<SplitContact[]>([]);
 
-  // Card the current transaction is linked to, with its history for reward math.
-  const [cardCtx, setCardCtx] = useState<(CardRewardContext & { txnId: string }) | null>(null);
+  // The current transaction's card and that card's history, for reward math.
+  // Held per card rather than per transaction, so browsing between spends on
+  // one card neither reloads it nor makes the reward row blink out and back.
+  // Bumping cardCtxVersion reloads it (queue refresh, detail sheet closed).
+  const [cardCtx, setCardCtx] = useState<CardRewardContext | null>(null);
+  const [cardCtxVersion, setCardCtxVersion] = useState(0);
+  // Only set by tapping a chip — null means "leave the tier as it is".
   const [selectedTierId, setSelectedTierId] = useState<string | null>(null);
+  // Scrolling is only a fallback for screens too short to fit everything.
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
 
   const pan = useRef(new Animated.ValueXY()).current;
   const isAnimatingRef = useRef(false);
@@ -97,46 +96,38 @@ const ReviewScreen = () => {
     setSelectedTierId(null);
   }, [currentTxn?.id]);
 
-  const currentTxnId = currentTxn?.id;
-  const currentCardId = currentTxn?.card_id;
+  const currentTxnId = currentTxn?.id ?? null;
+  const currentCardId = currentTxn?.card_id ?? null;
   useEffect(() => {
-    setCardCtx(null);
-    if (!currentTxnId || !currentCardId) return;
+    if (!currentCardId) return;
     let cancelled = false;
     loadCardRewardContext(currentCardId)
       .then(ctx => {
-        if (!cancelled && ctx) setCardCtx({ ...ctx, txnId: currentTxnId });
+        if (!cancelled) setCardCtx(ctx);
       })
       .catch(e => console.error('Failed to load card for review:', e));
     return () => {
       cancelled = true;
     };
-  }, [currentTxnId, currentCardId]);
+  }, [currentCardId, cardCtxVersion]);
 
-  // Tier chips for a credit-card spend. The auto tier (merchant keyword, else
-  // the card default) is what the transaction earns if nothing is picked, so
-  // it leads the row and starts selected — unless a tier was already chosen
-  // for it from the transaction detail sheet.
+  const linkedCard = cardCtx && cardCtx.card.id === currentCardId ? cardCtx.card : null;
+
+  // Tier chips for a credit-card spend. The tier in effect (picked earlier
+  // from the detail sheet, else the auto one) starts selected; the auto tier
+  // (merchant keyword, else card default) leads the row.
   const reward = useMemo(() => {
-    if (!cardCtx || cardCtx.txnId !== currentTxnId) return null;
-    const program = cardCtx.card.program;
-    const txn = cardCtx.txns.find(t => t.id === currentTxnId);
-    if (!program || !txn || txn.type !== 'debit') return null;
-    const autoTier = resolveTier(program, { ...txn, reward_tier: null });
-    if (!autoTier) return null;
-    return {
-      txnId: txn.id,
-      program,
-      autoTierId: autoTier.id,
-      savedTierId: resolveTier(program, txn)?.id ?? autoTier.id,
-      tiers: [autoTier, ...program.tiers.filter(t => t.id !== autoTier.id)],
-      byTier: rewardsByTier(program, cardCtx.card.statement_day, cardCtx.txns, txn.id),
-    };
-  }, [cardCtx, currentTxnId]);
+    if (!linkedCard || !cardCtx || !currentTxnId) return null;
+    const info = rewardInfoFor(linkedCard, cardCtx.txns, currentTxnId);
+    // Empty when the engine skips the spend (zero amount, unreadable date) —
+    // a row of "₹0.00" chips would wrongly say it earns nothing.
+    if (!info || info.byTier.size === 0) return null;
+    const autoTier = info.program.tiers.find(t => t.id === info.autoTierId)!;
+    return { ...info, tiers: [autoTier, ...info.program.tiers.filter(t => t.id !== info.autoTierId)] };
+  }, [linkedCard, cardCtx, currentTxnId]);
 
-  const activeTierId = selectedTierId ?? reward?.savedTierId ?? null;
+  const activeTierId = selectedTierId ?? reward?.tier.id ?? null;
   const activeReward = activeTierId ? reward?.byTier.get(activeTierId) : undefined;
-  const linkedCard = cardCtx && cardCtx.txnId === currentTxnId ? cardCtx.card : null;
 
   const loadData = useCallback(async () => {
     try {
@@ -152,6 +143,8 @@ const ReviewScreen = () => {
       // shifts everything after it down the list.
       const keepIndex = rows.findIndex(t => t.id === currentIdRef.current);
       setCurrentIndex(i => (keepIndex >= 0 ? keepIndex : Math.max(0, Math.min(i, rows.length - 1))));
+      // Picks up card edits made on another tab and spends that just arrived.
+      setCardCtxVersion(v => v + 1);
     } catch (error) {
       console.error(error);
     }
@@ -190,18 +183,31 @@ const ReviewScreen = () => {
         [selectedCategoryId, note, new Date().toISOString(), txn.id]
       );
 
-      // Picking the auto tier stores nothing, so the transaction keeps
-      // following the card's keywords/default if those are edited later.
-      if (reward && reward.txnId === txn.id && activeTierId) {
-        await setTransactionRewardTier(txn.id, activeTierId === reward.autoTierId ? null : activeTierId);
-      }
-
       // Save splits if any
       for (const split of selectedContacts) {
         await createSplit(txn.id, split.id, split.name, split.amountOwed);
       }
     } catch (error) {
       console.error('Failed to update transaction', error);
+    }
+
+    // Written only when a chip was tapped, so an untouched spend keeps what it
+    // had — including a tier picked in the detail sheet after the chips were
+    // drawn. The auto chip stores NULL so the spend keeps following the
+    // card's keywords/default if those are edited later. Kept apart from the
+    // block above: a failure here mustn't cost the splits.
+    const tierId = selectedTierId;
+    if (tierId && reward && txn.id === currentTxnId) {
+      const stored = tierId === reward.autoTierId ? null : tierId;
+      try {
+        await setTransactionRewardTier(txn.id, stored);
+        // Later spends on this card are valued against this one's caps.
+        setCardCtx(prev =>
+          prev && { ...prev, txns: prev.txns.map(t => (t.id === txn.id ? { ...t, reward_tier: stored } : t)) }
+        );
+      } catch (error) {
+        console.error('Failed to save reward tier', error);
+      }
     }
   };
 
@@ -385,177 +391,191 @@ const ReviewScreen = () => {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.swiperContainer}>
-        <Text style={[styles.position, { color: colors.textSecondary }]}>
-          {currentIndex + 1} of {txns.length}
-        </Text>
-        {currentTxn && (
-          <Animated.View
-            style={[
-              styles.card,
-              {
-                backgroundColor: colors.surface,
-                shadowColor: colors.cardShadow,
-                transform: [
-                  ...pan.getTranslateTransform(),
-                  {
-                    rotate: pan.x.interpolate({
-                      inputRange: [-200, 0, 200],
-                      outputRange: ['-10deg', '0deg', '10deg'],
-                      extrapolate: 'clamp',
-                    }),
-                  },
-                ],
-              },
-            ]}
-            {...panResponder.panHandlers}
-          >
-            <TouchableOpacity
-              activeOpacity={0.95}
-              onPress={() => setDetailTxn(currentTxn)}
-              style={styles.cardInnerTouchable}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        scrollEnabled={contentHeight > viewportHeight + 1}
+        keyboardShouldPersistTaps="handled"
+        onLayout={e => setViewportHeight(e.nativeEvent.layout.height)}
+        onContentSizeChange={(_, h) => setContentHeight(h)}
+      >
+        <View style={styles.swiperContainer}>
+          <Text style={[styles.position, { color: colors.textSecondary }]}>
+            {currentIndex + 1} of {txns.length}
+          </Text>
+          {currentTxn && (
+            <Animated.View
+              style={[
+                styles.card,
+                {
+                  backgroundColor: colors.surface,
+                  shadowColor: colors.cardShadow,
+                  transform: [
+                    ...pan.getTranslateTransform(),
+                    {
+                      rotate: pan.x.interpolate({
+                        inputRange: [-200, 0, 200],
+                        outputRange: ['-10deg', '0deg', '10deg'],
+                        extrapolate: 'clamp',
+                      }),
+                    },
+                  ],
+                },
+              ]}
+              {...panResponder.panHandlers}
             >
-              <Text style={[styles.cardBank, { color: colors.textSecondary }]} numberOfLines={1}>
-                {currentTxn.bank}
-                {linkedCard ? ` · ${linkedCard.name}${linkedCard.last4 ? ` ••${linkedCard.last4}` : ''}` : ''}
-              </Text>
-              <Text style={[styles.cardAmount, { color: currentTxn.type === 'credit' ? colors.success : colors.danger }]}>
-                {currentTxn.type === 'credit' ? '+' : '-'}₹{currentTxn.amount.toFixed(2)}
-              </Text>
-              <Text style={[styles.cardMerchant, { color: colors.text }]}>{currentTxn.merchant_raw}</Text>
-              <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
-                {formatTxnDateTime(currentTxn.date)}
-              </Text>
-              {currentTxn.location ? (
+              <TouchableOpacity
+                activeOpacity={0.95}
+                onPress={() => setDetailTxn(currentTxn)}
+                style={styles.cardInnerTouchable}
+              >
+                <Text style={[styles.cardBank, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {currentTxn.bank}
+                  {linkedCard ? ` · ${linkedCard.name}${linkedCard.last4 ? ` ••${linkedCard.last4}` : ''}` : ''}
+                </Text>
+                <Text style={[styles.cardAmount, { color: currentTxn.type === 'credit' ? colors.success : colors.danger }]}>
+                  {currentTxn.type === 'credit' ? '+' : '-'}₹{currentTxn.amount.toFixed(2)}
+                </Text>
+                <Text style={[styles.cardMerchant, { color: colors.text }]} numberOfLines={2}>
+                  {currentTxn.merchant_raw}
+                </Text>
+                <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
+                  {formatTxnDateTime(currentTxn.date)}
+                </Text>
+                {currentTxn.location ? (
+                  <TouchableOpacity
+                    style={[styles.cardLocation, { backgroundColor: colors.background, borderColor: colors.border }]}
+                    onPress={() => openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.cardLocationText, { color: colors.primary }]} numberOfLines={1}>
+                      📍 {currentTxn.location} <Text style={styles.mapsLink}>↗</Text>
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+        </View>
+
+        {currentTxn && (
+          <View style={[styles.formContainer, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+            {reward ? (
+              <>
+                <View style={styles.labelRow}>
+                  <Text style={[styles.label, { color: colors.text }]}>Reward</Text>
+                  <Text
+                    style={[
+                      styles.rewardEarned,
+                      { color: activeReward && activeReward.units > 0 ? colors.success : colors.textSecondary },
+                    ]}
+                  >
+                    {formatUnits(reward.program, activeReward?.units ?? 0)}
+                    {activeReward && activeReward.units < activeReward.uncappedUnits ? ' (capped)' : ''}
+                  </Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+                  {reward.tiers.map(tier => {
+                    const selected = tier.id === activeTierId;
+                    const earned = reward.byTier.get(tier.id)?.units ?? 0;
+                    return (
+                      <TouchableOpacity
+                        key={tier.id}
+                        style={[
+                          styles.tierChip,
+                          {
+                            backgroundColor: selected ? colors.primary : colors.background,
+                            borderColor: selected ? colors.primary : colors.border,
+                          },
+                        ]}
+                        onPress={() => setSelectedTierId(tier.id)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                      >
+                        <Text
+                          style={[
+                            styles.tierChipLabel,
+                            selected && styles.tierChipLabelSelected,
+                            { color: selected ? colors.onPrimary : colors.text },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {tier.label}
+                        </Text>
+                        <Text
+                          style={[styles.tierChipMeta, { color: selected ? colors.onPrimary : colors.textSecondary }]}
+                          numberOfLines={1}
+                        >
+                          {formatShortRate(reward.program, tier)} · {formatUnits(reward.program, earned)}
+                          {tier.id === reward.autoTierId ? ' · auto' : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </>
+            ) : null}
+
+            <Text style={[styles.label, { color: colors.text }]}>Category</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+              {categories.map((cat) => (
                 <TouchableOpacity
-                  style={[styles.cardLocation, { backgroundColor: colors.background, borderColor: colors.border }]}
-                  onPress={() => openLocationInGoogleMaps(currentTxn.location, currentTxn.latitude, currentTxn.longitude)}
-                  activeOpacity={0.7}
+                  key={cat.id}
+                  style={[
+                    styles.chip,
+                    {
+                      backgroundColor: selectedCategoryId === cat.id ? colors.primary : colors.background,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setSelectedCategoryId(cat.id)}
                 >
-                  <Text style={[styles.cardLocationText, { color: colors.primary }]}>
-                    📍 {currentTxn.location} <Text style={styles.mapsLink}>↗</Text>
+                  <Text
+                    style={
+                      selectedCategoryId === cat.id
+                        ? styles.chipTextSelected
+                        : [styles.chipText, { color: colors.text }]
+                    }
+                  >
+                    {cat.name}
                   </Text>
                 </TouchableOpacity>
-              ) : null}
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-      </View>
+              ))}
+            </ScrollView>
 
-      {currentTxn && (
-        <View style={[styles.formContainer, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-          {reward ? (
-            <>
-              <View style={styles.labelRow}>
-                <Text style={[styles.label, { color: colors.text }]}>Reward</Text>
-                <Text
-                  style={[
-                    styles.rewardEarned,
-                    { color: activeReward && activeReward.units > 0 ? colors.success : colors.textSecondary },
-                  ]}
-                >
-                  {formatUnits(reward.program, activeReward?.units ?? 0)}
-                  {activeReward && activeReward.units < activeReward.uncappedUnits ? ' (capped)' : ''}
-                </Text>
-              </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-                {reward.tiers.map(tier => {
-                  const selected = tier.id === activeTierId;
-                  const earned = reward.byTier.get(tier.id)?.units ?? 0;
-                  return (
-                    <TouchableOpacity
-                      key={tier.id}
-                      style={[
-                        styles.tierChip,
-                        {
-                          backgroundColor: selected ? colors.primary : colors.background,
-                          borderColor: selected ? colors.primary : colors.border,
-                        },
-                      ]}
-                      onPress={() => setSelectedTierId(tier.id)}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                    >
-                      <Text
-                        style={selected ? styles.tierChipLabelSelected : [styles.tierChipLabel, { color: colors.text }]}
-                        numberOfLines={1}
-                      >
-                        {tier.label}
-                      </Text>
-                      <Text
-                        style={[styles.tierChipMeta, selected ? styles.chipTextSelected : { color: colors.textSecondary }]}
-                        numberOfLines={1}
-                      >
-                        {chipRate(reward.program, tier)} · {formatUnits(reward.program, earned)}
-                        {tier.id === reward.autoTierId ? ' · auto' : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </>
-          ) : null}
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
+              placeholder="Note — why was this spend?"
+              placeholderTextColor={colors.textSecondary}
+              value={note}
+              onChangeText={setNote}
+            />
 
-          <Text style={[styles.label, { color: colors.text }]}>Category</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-            {categories.map((cat) => (
-              <TouchableOpacity
-                key={cat.id}
-                style={[
-                  styles.chip,
-                  {
-                    backgroundColor: selectedCategoryId === cat.id ? colors.primary : colors.background,
-                    borderColor: colors.border,
-                  },
-                ]}
-                onPress={() => setSelectedCategoryId(cat.id)}
-              >
-                <Text
-                  style={
-                    selectedCategoryId === cat.id
-                      ? styles.chipTextSelected
-                      : [styles.chipText, { color: colors.text }]
-                  }
-                >
-                  {cat.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+            <View style={styles.row}>
+              {currentTxn.type === 'credit' ? (
+                <>
+                  <TouchableOpacity style={styles.splitButton} onPress={handleMarkCreditForFriend}>
+                    <Text style={styles.splitButtonText}>For a Friend</Text>
+                  </TouchableOpacity>
 
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
-            placeholder="Note — why was this spend?"
-            placeholderTextColor={colors.textSecondary}
-            value={note}
-            onChangeText={setNote}
-          />
+                  <TouchableOpacity style={styles.reviewButton} onPress={reviewAndNext}>
+                    <Text style={styles.reviewButtonText}>Mark as Mine</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity style={styles.splitButton} onPress={openSplitModal}>
+                    <Text style={styles.splitButtonText}>Split this ({selectedContacts.length})</Text>
+                  </TouchableOpacity>
 
-          <View style={styles.row}>
-            {currentTxn.type === 'credit' ? (
-              <>
-                <TouchableOpacity style={styles.splitButton} onPress={handleMarkCreditForFriend}>
-                  <Text style={styles.splitButtonText}>For a Friend</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.reviewButton} onPress={reviewAndNext}>
-                  <Text style={styles.reviewButtonText}>Mark as Mine</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <TouchableOpacity style={styles.splitButton} onPress={openSplitModal}>
-                  <Text style={styles.splitButtonText}>Split this ({selectedContacts.length})</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.reviewButton} onPress={reviewAndNext}>
-                  <Text style={styles.reviewButtonText}>Review & Next</Text>
-                </TouchableOpacity>
-              </>
-            )}
+                  <TouchableOpacity style={styles.reviewButton} onPress={reviewAndNext}>
+                    <Text style={styles.reviewButtonText}>Review & Next</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
           </View>
-        </View>
-      )}
+        )}
+      </ScrollView>
 
       {/* Split Modal */}
       <Modal visible={splitModalVisible} animationType="slide" presentationStyle="pageSheet">
@@ -627,24 +647,36 @@ const ReviewScreen = () => {
         </SafeAreaView>
       </Modal>
 
-      <TransactionDetailModal transaction={detailTxn} onClose={() => setDetailTxn(null)} />
+      <TransactionDetailModal
+        transaction={detailTxn}
+        onClose={() => {
+          setDetailTxn(null);
+          // The sheet can change the reward tier: redraw the chips from what's
+          // stored now, and drop any chip tap made before it was opened.
+          setSelectedTierId(null);
+          setCardCtxVersion(v => v + 1);
+        }}
+      />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  scrollContent: { flexGrow: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18 },
   swiperContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 8 },
   position: { fontSize: 13, marginBottom: 8 },
   // Grows into whatever the form leaves over (up to 280) instead of a fixed
   // 300, so the card, reward tiers and buttons all fit without scrolling.
+  // minHeight fits a 2-line merchant plus location; on screens too short for
+  // that, the surrounding ScrollView turns scrolling on instead of clipping.
   card: {
     width: '88%',
     flex: 1,
     maxHeight: 280,
-    minHeight: 150,
+    minHeight: 220,
     borderRadius: 20,
     padding: 16,
     justifyContent: 'center',
@@ -688,7 +720,7 @@ const styles = StyleSheet.create({
   chipTextSelected: { color: '#fff', fontWeight: 'bold' },
   tierChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, marginRight: 8, borderWidth: 1, maxWidth: 200 },
   tierChipLabel: { fontSize: 13, fontWeight: '600' },
-  tierChipLabelSelected: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  tierChipLabelSelected: { fontWeight: '700' },
   tierChipMeta: { fontSize: 12, marginTop: 2 },
   input: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },

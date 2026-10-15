@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
-import { RewardProgram, estimateUnits, formatTierRate, formatUnits } from '../services/rewards/engine';
+import { RewardProgram, TxnReward, estimateUnits, formatTierRate, formatUnits } from '../services/rewards/engine';
 
 interface Props {
   visible: boolean;
@@ -11,11 +11,13 @@ interface Props {
   currentTierId: string | null;
   /** Whether currentTierId was picked by the user rather than defaulted. */
   isExplicit: boolean;
+  /** What this spend earns on each tier with caps applied (rewardInfoFor); falls back to an uncapped estimate. */
+  earnedByTier?: Map<string, TxnReward>;
   onSelect: (tierId: string | null) => void;
   onClose: () => void;
 }
 
-const RewardTierPicker = ({ visible, program, amount, currentTierId, isExplicit, onSelect, onClose }: Props) => {
+const RewardTierPicker = ({ visible, program, amount, currentTierId, isExplicit, earnedByTier, onSelect, onClose }: Props) => {
   const { colors } = useTheme();
   if (!program) return null;
 
@@ -48,7 +50,7 @@ const RewardTierPicker = ({ visible, program, amount, currentTierId, isExplicit,
 
             {program.tiers.map(tier => {
               const selected = isExplicit && tier.id === currentTierId;
-              const estimate = estimateUnits(program, tier, amount);
+              const estimate = earnedByTier?.get(tier.id)?.units ?? estimateUnits(program, tier, amount);
               return (
                 <TouchableOpacity
                   key={tier.id}

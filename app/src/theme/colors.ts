@@ -4,6 +4,7 @@ export const lightTheme = {
   text: '#111827',
   textSecondary: '#6B7280',
   primary: '#2563EB', // Simple royal blue
+  onPrimary: '#FFFFFF', // Text/icons on a primary fill
   accent: '#10B981', // Clean green
   border: '#E5E7EB',
   danger: '#EF4444',
@@ -21,6 +22,7 @@ export const darkTheme = {
   text: '#F9FAFB',
   textSecondary: '#9CA3AF',
   primary: '#3B82F6', // Soft blue
+  onPrimary: '#FFFFFF',
   accent: '#34D399', // Soft green
   border: '#374151',
   danger: '#F87171',
