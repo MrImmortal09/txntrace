@@ -51,9 +51,10 @@ function MainApp() {
       try {
         await requestPermissions();
         await setupDatabase();
-        // Not fatal: unlinked spends just stay unlinked until a card is re-saved.
-        await rematchAfterMatcherUpdate().catch(e => console.error('Failed to rematch card transactions:', e));
         setDbInitialized(true);
+        // In the background: a big SMS backlog shouldn't hold up launch, and a
+        // failure isn't fatal — spends just stay unlinked until a card is re-saved.
+        rematchAfterMatcherUpdate().catch(e => console.error('Failed to rematch card transactions:', e));
       } catch (error) {
         console.error('Failed to initialize database:', error);
       }

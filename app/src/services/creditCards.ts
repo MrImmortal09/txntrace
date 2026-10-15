@@ -4,12 +4,12 @@ import { Card, matchCard } from './cardMatching';
 import {
   buildCardOverview,
   CardOverview,
-  computeRewards,
   RewardEntry,
   RewardProgram,
   RewardTier,
   RewardTxn,
   resolveTier,
+  rewardsByTier,
   TxnReward,
 } from './rewards/engine';
 
@@ -83,7 +83,8 @@ export const rematchCardTransactions = async (resetCardId?: string): Promise<num
     const body: string = txn.sms_body || '';
     const card = matchCard(cards, txn.sender || '', body) || matchCard(cards, txn.sender || '', body.replace(/\s+/g, ' '));
     if (card) {
-      await db.execute('UPDATE transactions SET card_id = ? WHERE id = ?', [card.id, txn.id]);
+      // Re-checked so a row linked by something else meanwhile (sync, ingest) is never overwritten.
+      await db.execute('UPDATE transactions SET card_id = ? WHERE id = ? AND card_id IS NULL', [card.id, txn.id]);
       matched++;
     }
   }
@@ -98,6 +99,10 @@ const CARD_MATCHER_KEY = 'card_matcher_version';
 
 export const rematchAfterMatcherUpdate = async (): Promise<void> => {
   if ((await getSetting(CARD_MATCHER_KEY)) === CARD_MATCHER_VERSION) return;
+  // No cards yet (fresh install): leave the version unset so the run still
+  // happens once cards exist — including ones that arrive through web sync,
+  // which, unlike saving a card in the app, doesn't rematch by itself.
+  if (!rowsOf(await db.execute('SELECT COUNT(*) AS n FROM cards'))[0]?.n) return;
   await rematchCardTransactions();
   await setSetting(CARD_MATCHER_KEY, CARD_MATCHER_VERSION);
 };
@@ -285,30 +290,45 @@ export const loadCardRewardContext = async (cardId: string): Promise<CardRewardC
 export interface TransactionRewardInfo {
   card: CreditCard;
   program: RewardProgram;
+  /** The tier in effect: the one picked for it, else autoTierId. */
   tier: RewardTier;
+  /** What merchant keywords / the card default give it when nothing is picked. */
+  autoTierId: string;
   isExplicit: boolean;
+  /** Null when the engine skips the spend (zero amount, unreadable date). */
   reward: TxnReward | null;
+  /** What the spend would earn on each tier, caps and thresholds applied; empty when skipped. */
+  byTier: Map<string, TxnReward>;
 }
 
 /**
  * Reward for one transaction, computed against the card's full history so caps and thresholds are honoured.
+ * Shared by the transaction detail sheet and the Review tab so both label and value a spend the same way.
  * If the card has no statement_day set, computeRewards falls back to calendar-month cycles for cap bucketing
  * (see CALENDAR_MONTH in engine.ts) — sensible until the user fills in a real statement day.
  */
-export const getTransactionReward = async (txnId: string, cardId: string): Promise<TransactionRewardInfo | null> => {
-  const card = await getCreditCard(cardId);
-  if (!card?.program) return null;
-  const txns = await loadCardTxns(card.id);
+export const rewardInfoFor = (card: CreditCard, txns: RewardTxn[], txnId: string): TransactionRewardInfo | null => {
+  const program = card.program;
+  if (!program) return null;
   const txn = txns.find(t => t.id === txnId);
   if (!txn || txn.type !== 'debit') return null;
-  const tier = resolveTier(card.program, txn);
-  if (!tier) return null;
-  const rewards = computeRewards(card.program, card.statement_day, txns);
+  const tier = resolveTier(program, txn);
+  const autoTier = resolveTier(program, { ...txn, reward_tier: null });
+  if (!tier || !autoTier) return null;
+  // Valuing the spend on its own tier is the same as computeRewards on the untouched history.
+  const byTier = rewardsByTier(program, card.statement_day, txns, txnId);
   return {
     card,
-    program: card.program,
+    program,
     tier,
+    autoTierId: autoTier.id,
     isExplicit: !!txn.reward_tier && tier.id === txn.reward_tier,
-    reward: rewards.get(txnId) || null,
+    reward: byTier.get(tier.id) || null,
+    byTier,
   };
+};
+
+export const getTransactionReward = async (txnId: string, cardId: string): Promise<TransactionRewardInfo | null> => {
+  const ctx = await loadCardRewardContext(cardId);
+  return ctx ? rewardInfoFor(ctx.card, ctx.txns, txnId) : null;
 };

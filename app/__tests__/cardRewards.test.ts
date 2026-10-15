@@ -5,6 +5,7 @@ import {
   cycleStartFor,
   dueDateFor,
   formatAcceleratedSplit,
+  formatShortRate,
   formatTierRate,
   isRefundCredit,
   resolveTier,
@@ -341,5 +342,13 @@ describe('helpers', () => {
     expect(formatTierRate(mayura, mayura.tiers[0])).toBe('5 pts/₹150 (≈0.83%)');
     const flipkart = program('axis_flipkart');
     expect(formatTierRate(flipkart, flipkart.tiers[0])).toBe('7.5%');
+  });
+
+  it('formats a short chip rate', () => {
+    const mayura = program('idfc_mayura');
+    expect(formatShortRate(mayura, mayura.tiers[0])).toBe('≈0.83%');
+    const swiggy = program('hdfc_swiggy_blck');
+    expect(formatShortRate(swiggy, swiggy.tiers[0])).toBe('10%');
+    expect(formatShortRate(swiggy, swiggy.tiers.find(t => t.id === 'excluded')!)).toBe('0%');
   });
 });

@@ -32,6 +32,20 @@ describe('extractLast4', () => {
     expect(extractLast4('Spent Rs.250.00 From HDFC Bank Card x1234 At SWIGGY On 2026-10-10:12:34:56')).toBe('1234');
     expect(extractLast4('Spent Rs. 450.00 at Starbucks on HDFC Bank Card ending 4321 on 14-Sep-26.')).toBe('4321');
     expect(extractLast4('Rs.99 spent on SBI Credit Card ending with 7788 at AMAZON')).toBe('7788');
+    expect(extractLast4('INR 1,200 spent on Axis Bank Credit Card ending in 4455 at ZOMATO')).toBe('4455');
+    expect(extractLast4('Rs.300 spent using Kotak Credit Card number 6677 at UBER')).toBe('6677');
+    expect(extractLast4('Payment of Rs.5000 received on your HDFC Bank Credit Card 0904')).toBe('0904');
+  });
+
+  it('ignores a card that is being paid rather than paying', () => {
+    expect(extractLast4('INR 10,000 debited from a/c 50100012341234 towards Credit Card 5678 payment')).toBeNull();
+    expect(extractLast4('Rs 10000 debited from your account towards Credit Card 5678')).toBeNull();
+    expect(extractLast4('Rs.5000 paid to HDFC Bank Credit Card 0904 via NEFT')).toBeNull();
+  });
+
+  it('does not take the first group of a spaced-out card number', () => {
+    expect(extractLast4('Rs.500 spent on Card 4628 XXXX XXXX 3001 at SHOP')).toBeNull();
+    expect(extractLast4('Rs.500 spent on Card 4628-****-****-3001 at SHOP')).toBeNull();
   });
 
   it('does not take amounts, references or full card numbers as the last 4', () => {

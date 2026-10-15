@@ -9,6 +9,19 @@ export interface Card {
 }
 
 /**
+ * Some card alerts print the digits with no mask run at all — HDFC's "Spent
+ * Rs.460 On HDFC Bank Card 0904 At ...", "Card x1234", "Card ending in 4321",
+ * "Card number 1234". Only taken when:
+ * - the card is what paid ("on/from/using/via/with ... Card"), so a bank-side
+ *   debit *towards* a card bill ("debited from your account towards Credit
+ *   Card 5678") isn't booked as card spend;
+ * - it's a lone 4-digit group, so neither an amount/reference nor the first
+ *   group of a spaced-out card number ("Card 4628 XXXX XXXX 3001") is taken.
+ */
+const BARE_CARD_DIGITS =
+  /\b(?:on|from|using|via|with)\s+(?:your\s+)?(?:(?!(?:towards|to|for)\b)[a-z]+\s+){0,4}card\s+(?:(?:no|num|number)\b\.?:?\s*|ending\s+(?:(?:with|in)\s+)?)?[xX*]?(\d{4})\b(?![\s-]*(?:[xX*]{2,}|\d))/i;
+
+/**
  * Pulls the masked account/card reference out of a bank SMS — "A/c XX1234",
  * "Acct XX577", "A/C XXXXXXXX3577", "Card no. **3577", "526873XXXXXX6718".
  * Real examples vary on how many digits show (2 to 4) after the mask run, so
@@ -19,11 +32,7 @@ export interface Card {
 export const extractLast4 = (body: string): string | null => {
   const masked = body.match(/(?:X{2,}|x{2,}|\*{2,})(\d{2,6})/);
   if (masked) return masked[1];
-  // Some card alerts print the digits with no mask run at all — HDFC's
-  // "Spent Rs.460 On HDFC Bank Card 0904 At ...", "Card x1234", "Card ending
-  // 4321". Only taken when anchored to "Card" and exactly 4 digits long, so a
-  // stray amount or reference number can't be mistaken for a card number.
-  const bare = body.match(/\bcard\s+(?:no\.?\s*|ending\s+(?:with\s+)?)?[xX*]?(\d{4})\b/i);
+  const bare = body.match(BARE_CARD_DIGITS);
   return bare ? bare[1] : null;
 };
 

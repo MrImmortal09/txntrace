@@ -105,6 +105,7 @@ const CardRewardRow = ({ transactionId, cardId, amount }: { transactionId: strin
         amount={amount}
         currentTierId={tier.id}
         isExplicit={info.isExplicit}
+        earnedByTier={info.byTier}
         onSelect={async tierId => {
           await setTransactionRewardTier(transactionId, tierId);
           setPicking(false);
