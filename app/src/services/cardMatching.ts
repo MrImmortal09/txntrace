@@ -17,8 +17,14 @@ export interface Card {
  * mismatch when comparing against a user-entered last4.
  */
 export const extractLast4 = (body: string): string | null => {
-  const match = body.match(/(?:X{2,}|x{2,}|\*{2,})(\d{2,6})/);
-  return match ? match[1] : null;
+  const masked = body.match(/(?:X{2,}|x{2,}|\*{2,})(\d{2,6})/);
+  if (masked) return masked[1];
+  // Some card alerts print the digits with no mask run at all — HDFC's
+  // "Spent Rs.460 On HDFC Bank Card 0904 At ...", "Card x1234", "Card ending
+  // 4321". Only taken when anchored to "Card" and exactly 4 digits long, so a
+  // stray amount or reference number can't be mistaken for a card number.
+  const bare = body.match(/\bcard\s+(?:no\.?\s*|ending\s+(?:with\s+)?)?[xX*]?(\d{4})\b/i);
+  return bare ? bare[1] : null;
 };
 
 const digitsMatch = (extracted: string, configured: string): boolean => {

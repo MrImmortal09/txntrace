@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView, Animated, PanResponder, AppState } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import Contacts from 'react-native-contacts';
@@ -9,6 +9,16 @@ import {
   matchCreditToContact,
 } from '../services/settlements';
 import { checkNewMessages } from '../services/smsIngest';
+import { CardRewardContext, loadCardRewardContext, setTransactionRewardTier } from '../services/creditCards';
+import {
+  effectivePercent,
+  formatTierRate,
+  formatUnits,
+  resolveTier,
+  rewardsByTier,
+  RewardProgram,
+  RewardTier,
+} from '../services/rewards/engine';
 import { openLocationInGoogleMaps } from '../utils/maps';
 import { useTheme } from '../theme/ThemeProvider';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
@@ -27,6 +37,12 @@ interface SplitContact {
   name: string;
   amountOwed: number;
 }
+
+/** Short enough for a chip: "10%" for cashback, "≈0.83%" for points (formatTierRate's full form is too long). */
+const chipRate = (program: RewardProgram, tier: RewardTier): string => {
+  if (program.kind === 'cashback') return formatTierRate(program, tier);
+  return tier.rate > 0 ? `≈${Math.round(effectivePercent(program, tier.rate) * 100) / 100}%` : '0%';
+};
 
 const ReviewScreen = () => {
   const { colors } = useTheme();
@@ -59,6 +75,10 @@ const ReviewScreen = () => {
   const [contactRecency, setContactRecency] = useState<Record<string, string>>({});
   const [selectedContacts, setSelectedContacts] = useState<SplitContact[]>([]);
 
+  // Card the current transaction is linked to, with its history for reward math.
+  const [cardCtx, setCardCtx] = useState<(CardRewardContext & { txnId: string }) | null>(null);
+  const [selectedTierId, setSelectedTierId] = useState<string | null>(null);
+
   const pan = useRef(new Animated.ValueXY()).current;
   const isAnimatingRef = useRef(false);
 
@@ -74,7 +94,49 @@ const ReviewScreen = () => {
     setSelectedCategoryId(null);
     setNote('');
     setSelectedContacts([]);
+    setSelectedTierId(null);
   }, [currentTxn?.id]);
+
+  const currentTxnId = currentTxn?.id;
+  const currentCardId = currentTxn?.card_id;
+  useEffect(() => {
+    setCardCtx(null);
+    if (!currentTxnId || !currentCardId) return;
+    let cancelled = false;
+    loadCardRewardContext(currentCardId)
+      .then(ctx => {
+        if (!cancelled && ctx) setCardCtx({ ...ctx, txnId: currentTxnId });
+      })
+      .catch(e => console.error('Failed to load card for review:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTxnId, currentCardId]);
+
+  // Tier chips for a credit-card spend. The auto tier (merchant keyword, else
+  // the card default) is what the transaction earns if nothing is picked, so
+  // it leads the row and starts selected — unless a tier was already chosen
+  // for it from the transaction detail sheet.
+  const reward = useMemo(() => {
+    if (!cardCtx || cardCtx.txnId !== currentTxnId) return null;
+    const program = cardCtx.card.program;
+    const txn = cardCtx.txns.find(t => t.id === currentTxnId);
+    if (!program || !txn || txn.type !== 'debit') return null;
+    const autoTier = resolveTier(program, { ...txn, reward_tier: null });
+    if (!autoTier) return null;
+    return {
+      txnId: txn.id,
+      program,
+      autoTierId: autoTier.id,
+      savedTierId: resolveTier(program, txn)?.id ?? autoTier.id,
+      tiers: [autoTier, ...program.tiers.filter(t => t.id !== autoTier.id)],
+      byTier: rewardsByTier(program, cardCtx.card.statement_day, cardCtx.txns, txn.id),
+    };
+  }, [cardCtx, currentTxnId]);
+
+  const activeTierId = selectedTierId ?? reward?.savedTierId ?? null;
+  const activeReward = activeTierId ? reward?.byTier.get(activeTierId) : undefined;
+  const linkedCard = cardCtx && cardCtx.txnId === currentTxnId ? cardCtx.card : null;
 
   const loadData = useCallback(async () => {
     try {
@@ -127,6 +189,12 @@ const ReviewScreen = () => {
         'UPDATE transactions SET category = ?, note = ?, reviewed = 1, needs_contact_match = 0, updated_at = ? WHERE id = ?',
         [selectedCategoryId, note, new Date().toISOString(), txn.id]
       );
+
+      // Picking the auto tier stores nothing, so the transaction keeps
+      // following the card's keywords/default if those are edited later.
+      if (reward && reward.txnId === txn.id && activeTierId) {
+        await setTransactionRewardTier(txn.id, activeTierId === reward.autoTierId ? null : activeTierId);
+      }
 
       // Save splits if any
       for (const split of selectedContacts) {
@@ -347,7 +415,10 @@ const ReviewScreen = () => {
               onPress={() => setDetailTxn(currentTxn)}
               style={styles.cardInnerTouchable}
             >
-              <Text style={[styles.cardBank, { color: colors.textSecondary }]}>{currentTxn.bank}</Text>
+              <Text style={[styles.cardBank, { color: colors.textSecondary }]} numberOfLines={1}>
+                {currentTxn.bank}
+                {linkedCard ? ` · ${linkedCard.name}${linkedCard.last4 ? ` ••${linkedCard.last4}` : ''}` : ''}
+              </Text>
               <Text style={[styles.cardAmount, { color: currentTxn.type === 'credit' ? colors.success : colors.danger }]}>
                 {currentTxn.type === 'credit' ? '+' : '-'}₹{currentTxn.amount.toFixed(2)}
               </Text>
@@ -373,8 +444,60 @@ const ReviewScreen = () => {
 
       {currentTxn && (
         <View style={[styles.formContainer, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+          {reward ? (
+            <>
+              <View style={styles.labelRow}>
+                <Text style={[styles.label, { color: colors.text }]}>Reward</Text>
+                <Text
+                  style={[
+                    styles.rewardEarned,
+                    { color: activeReward && activeReward.units > 0 ? colors.success : colors.textSecondary },
+                  ]}
+                >
+                  {formatUnits(reward.program, activeReward?.units ?? 0)}
+                  {activeReward && activeReward.units < activeReward.uncappedUnits ? ' (capped)' : ''}
+                </Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+                {reward.tiers.map(tier => {
+                  const selected = tier.id === activeTierId;
+                  const earned = reward.byTier.get(tier.id)?.units ?? 0;
+                  return (
+                    <TouchableOpacity
+                      key={tier.id}
+                      style={[
+                        styles.tierChip,
+                        {
+                          backgroundColor: selected ? colors.primary : colors.background,
+                          borderColor: selected ? colors.primary : colors.border,
+                        },
+                      ]}
+                      onPress={() => setSelectedTierId(tier.id)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                    >
+                      <Text
+                        style={selected ? styles.tierChipLabelSelected : [styles.tierChipLabel, { color: colors.text }]}
+                        numberOfLines={1}
+                      >
+                        {tier.label}
+                      </Text>
+                      <Text
+                        style={[styles.tierChipMeta, selected ? styles.chipTextSelected : { color: colors.textSecondary }]}
+                        numberOfLines={1}
+                      >
+                        {chipRate(reward.program, tier)} · {formatUnits(reward.program, earned)}
+                        {tier.id === reward.autoTierId ? ' · auto' : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </>
+          ) : null}
+
           <Text style={[styles.label, { color: colors.text }]}>Category</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
             {categories.map((cat) => (
               <TouchableOpacity
                 key={cat.id}
@@ -400,10 +523,9 @@ const ReviewScreen = () => {
             ))}
           </ScrollView>
 
-          <Text style={[styles.label, { color: colors.text }]}>Note</Text>
           <TextInput
             style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
-            placeholder="Why was this spend?"
+            placeholder="Note — why was this spend?"
             placeholderTextColor={colors.textSecondary}
             value={note}
             onChangeText={setNote}
@@ -514,13 +636,17 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18 },
-  swiperContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  position: { fontSize: 13, marginBottom: 12 },
+  swiperContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 8 },
+  position: { fontSize: 13, marginBottom: 8 },
+  // Grows into whatever the form leaves over (up to 280) instead of a fixed
+  // 300, so the card, reward tiers and buttons all fit without scrolling.
   card: {
     width: '88%',
-    height: 300,
+    flex: 1,
+    maxHeight: 280,
+    minHeight: 150,
     borderRadius: 20,
-    padding: 20,
+    padding: 16,
     justifyContent: 'center',
     alignItems: 'center',
     shadowOpacity: 0.1,
@@ -534,28 +660,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardBank: { fontSize: 16, marginBottom: 10 },
-  cardAmount: { fontSize: 40, fontWeight: 'bold', marginBottom: 10 },
+  cardBank: { fontSize: 15, marginBottom: 8 },
+  cardAmount: { fontSize: 38, fontWeight: 'bold', marginBottom: 8 },
   credit: { color: '#34C759' },
   debit: { color: '#FF3B30' },
-  cardMerchant: { fontSize: 20, textAlign: 'center', marginBottom: 10 },
+  cardMerchant: { fontSize: 19, textAlign: 'center', marginBottom: 8 },
   cardDate: { fontSize: 14 },
   cardLocation: { marginTop: 8, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, borderWidth: 1 },
   cardLocationText: { fontSize: 13, fontWeight: '500' },
   mapsLink: { fontSize: 12, textDecorationLine: 'underline' },
   
-  formContainer: { padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1 },
-  label: { fontSize: 16, fontWeight: '600', marginBottom: 10 },
-  categoryScroll: { marginBottom: 20 },
-  chip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginRight: 10, alignSelf: 'flex-start', borderWidth: 1 },
+  formContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+  },
+  label: { fontSize: 14, fontWeight: '600', marginBottom: 8 },
+  labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  rewardEarned: { fontSize: 14, fontWeight: '700' },
+  chipScroll: { marginBottom: 12, flexGrow: 0 },
+  chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, marginRight: 8, alignSelf: 'flex-start', borderWidth: 1 },
   chipSelected: {},
   chipText: {},
   chipTextSelected: { color: '#fff', fontWeight: 'bold' },
-  input: { padding: 12, borderRadius: 10, marginBottom: 20, borderWidth: 1 },
+  tierChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, marginRight: 8, borderWidth: 1, maxWidth: 200 },
+  tierChipLabel: { fontSize: 13, fontWeight: '600' },
+  tierChipLabelSelected: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  tierChipMeta: { fontSize: 12, marginTop: 2 },
+  input: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
-  splitButton: { flex: 1, backgroundColor: '#FF9500', padding: 14, borderRadius: 10, alignItems: 'center', marginRight: 10 },
+  splitButton: { flex: 1, backgroundColor: '#FF9500', padding: 12, borderRadius: 10, alignItems: 'center', marginRight: 10 },
   splitButtonText: { color: '#fff', fontWeight: 'bold' },
-  reviewButton: { flex: 1, backgroundColor: '#34C759', padding: 14, borderRadius: 10, alignItems: 'center' },
+  reviewButton: { flex: 1, backgroundColor: '#34C759', padding: 12, borderRadius: 10, alignItems: 'center' },
   reviewButtonText: { color: '#fff', fontWeight: 'bold' },
 
   modalContainer: { flex: 1 },
