@@ -382,9 +382,9 @@ const SettingsScreen = () => {
         <>
           <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>1. Shortcuts automation</Text>
-            <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way TxnTrace sees your bank SMS</Text>
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way Transaction Trace sees your bank SMS</Text>
             <Text style={[styles.description, { color: colors.textSecondary }]}>
-              iOS has no API for reading messages directly, so you hand them to TxnTrace with a
+              iOS has no API for reading messages directly, so you hand them to Transaction Trace with a
               one-time automation. It runs in the background — nothing opens, nothing
               is sent anywhere.
             </Text>

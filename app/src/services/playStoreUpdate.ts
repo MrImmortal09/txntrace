@@ -384,7 +384,7 @@ const offerBackgroundUpdate = async (info: AppUpdateInfo): Promise<boolean> => {
 
   if (!info.flexibleAllowed) {
     if (isManualCheck) {
-      Alert.alert('Update Available', 'A new version of TxnTrace is available on Google Play.', [
+      Alert.alert('Update Available', 'A new version of Transaction Trace is available on Google Play.', [
         { text: 'Later', style: 'cancel' },
         { text: 'Open Play Store', onPress: () => openPlayStore() },
       ]);
@@ -481,7 +481,7 @@ export const checkForAppUpdate = async (options?: { manual?: boolean }): Promise
       const updateUnderway = updateStatus.phase !== 'idle';
       if (!updateUnderway && !info.updateAvailable && !info.developerTriggeredUpdateInProgress) {
         if (isManualCheck) {
-          Alert.alert('Up to Date', 'TxnTrace is already at the latest version.');
+          Alert.alert('Up to Date', 'Transaction Trace is already at the latest version.');
         }
         return false;
       }
@@ -508,7 +508,7 @@ export const promptMandatoryUpdateFallback = () => {
 
   Alert.alert(
     'Update Required',
-    'A new version of TxnTrace is required to continue. Please update the app via Google Play.',
+    'A new version of Transaction Trace is required to continue. Please update the app via Google Play.',
     [
       {
         text: 'Exit App',

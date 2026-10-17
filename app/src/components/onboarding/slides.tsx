@@ -28,7 +28,7 @@ export const SLIDES: Slide[] = [
   {
     key: 'welcome',
     title: 'Welcome to TxnTrace',
-    body: 'TxnTrace turns the SMS your bank already sends into a clear record of your spending. No bank logins, and no typing in every expense.',
+    body: 'Transaction Trace turns the SMS your bank already sends into a clear record of your spending. No bank logins, and no typing in every expense.',
     points: [
       { icon: '📩', lead: 'Reads bank SMS', text: 'and picks out the amount, merchant and account.' },
       { icon: '✅', lead: 'You stay in charge:', text: 'mark each spend as yours, or split it with friends.' },
@@ -42,8 +42,8 @@ export const SLIDES: Slide[] = [
     eyebrow: { label: 'How it works' },
     title: 'Bank SMS become transactions',
     body: isIOS
-      ? 'iOS doesn’t let apps read your messages, so a one-time Shortcuts automation hands each bank SMS to TxnTrace in the background.'
-      : 'When a bank SMS arrives, TxnTrace reads it on your phone and adds it to your Daily list. Allow SMS access when Android asks; that’s what makes it automatic.',
+      ? 'iOS doesn’t let apps read your messages, so a one-time Shortcuts automation hands each bank SMS to Transaction Trace in the background.'
+      : 'When a bank SMS arrives, Transaction Trace reads it on your phone and adds it to your Daily list. Allow SMS access when Android asks; that’s what makes it automatic.',
     points: [
       isIOS
         ? {
@@ -127,7 +127,7 @@ export const SLIDES: Slide[] = [
       { icon: '➕', lead: 'The + button', text: 'starts a balance with someone you haven’t split with yet.' },
     ],
     Visual: FriendsVisual,
-    footnote: 'After the tour, TxnTrace asks for your contacts, so you can pick friends and their payments match to them.',
+    footnote: 'After the tour, Transaction Trace asks for your contacts, so you can pick friends and their payments match to them.',
   },
   {
     key: 'home',
@@ -161,7 +161,7 @@ export const SLIDES: Slide[] = [
       {
         icon: '🔎',
         lead: 'Log what you received',
-        text: 'and TxnTrace tells you if the bank paid less than expected.',
+        text: 'and Transaction Trace tells you if the bank paid less than expected.',
       },
     ],
     Visual: CardsVisual,
@@ -174,7 +174,7 @@ export const SLIDES: Slide[] = [
     points: [
       { icon: '📋', lead: 'Hold to copy', text: 'any field in a transaction’s details, like the amount or the SMS.' },
       { icon: '📍', lead: 'Places:', text: 'when a spend has one, tap it to open Google Maps.' },
-      { icon: '🧾', lead: 'SMS Logs', text: 'in More → Settings list every message TxnTrace saw and whether it could read it.' },
+      { icon: '🧾', lead: 'SMS Logs', text: 'in More → Settings list every message Transaction Trace saw and whether it could read it.' },
       { icon: '🌗', lead: 'Theme, backup and sync', text: 'are in More → Settings too.' },
       { icon: '🔁', lead: 'See this tour again', text: 'any time from More → Settings → Help.' },
     ],

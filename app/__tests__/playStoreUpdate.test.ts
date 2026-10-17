@@ -489,7 +489,7 @@ describe('playStoreUpdate service', () => {
       const expectUpdateRequiredAlert = () =>
         expect(Alert.alert).toHaveBeenCalledWith(
           'Update Required',
-          expect.stringContaining('A new version of TxnTrace is required to continue'),
+          expect.stringContaining('A new version of Transaction Trace is required to continue'),
           expect.any(Array),
           { cancelable: false }
         );
@@ -650,7 +650,7 @@ describe('playStoreUpdate service', () => {
       promptMandatoryUpdateFallback();
       expect(Alert.alert).toHaveBeenCalledWith(
         'Update Required',
-        expect.stringContaining('A new version of TxnTrace is required to continue'),
+        expect.stringContaining('A new version of Transaction Trace is required to continue'),
         [
           expect.objectContaining({ text: 'Exit App' }),
           expect.objectContaining({ text: 'Update Now' }),

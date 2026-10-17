@@ -18,7 +18,7 @@ const SmsAccessBanner = ({ style }: { style?: StyleProp<ViewStyle> }) => {
       <View style={styles.text}>
         <Text style={[styles.title, { color: colors.text }]}>SMS access is off</Text>
         <Text style={[styles.body, { color: colors.textSecondary }]}>
-          TxnTrace needs it to add bank SMS to Daily as they arrive.
+          Transaction Trace needs it to add bank SMS to Daily as they arrive.
         </Text>
       </View>
       <TouchableOpacity

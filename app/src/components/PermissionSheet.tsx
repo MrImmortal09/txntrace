@@ -7,7 +7,7 @@ import { IconFriends } from './TabIcons';
 import { ANDROID_PERMISSIONS, PermissionKind, registerPermissionPrompt } from '../services/permissions';
 
 /**
- * Android's permission flow, explained. Opens with why TxnTrace wants the
+ * Android's permission flow, explained. Opens with why Transaction Trace wants the
  * permission, then shows Android's own prompt. If Android has stopped asking
  * (refused twice), it switches to step-by-step directions for turning it on
  * in system settings, and closes by itself once the person comes back with
@@ -33,7 +33,7 @@ const COPY: Record<PermissionKind, Copy> = {
   sms: {
     title: 'Let TxnTrace see bank SMS',
     reason:
-      'Your bank texts you after every spend. With SMS access, TxnTrace adds each one to Daily as it arrives, so you don’t have to type them in.',
+      'Your bank texts you after every spend. With SMS access, Transaction Trace adds each one to Daily as it arrives, so you don’t have to type them in.',
     points: [
       'Only new messages, from the moment you allow it',
       'Read on this phone. Nothing leaves it unless you use backup or sync',
@@ -44,7 +44,7 @@ const COPY: Record<PermissionKind, Copy> = {
       ['Tap ', 'Open settings', ' below'],
       ['Tap ', 'Permissions'],
       ['Tap ', 'SMS', ', then ', 'Allow'],
-      ['Come back here. TxnTrace picks it up on its own'],
+      ['Come back here. Transaction Trace picks it up on its own'],
     ],
     // Android 13+ greys out SMS for apps installed outside the Play Store
     // until "restricted settings" are allowed for them.
@@ -66,7 +66,7 @@ const COPY: Record<PermissionKind, Copy> = {
       ['Tap ', 'Open settings', ' below'],
       ['Tap ', 'Permissions'],
       ['Tap ', 'Contacts', ', then ', 'Allow'],
-      ['Come back here. TxnTrace picks it up on its own'],
+      ['Come back here. Transaction Trace picks it up on its own'],
     ],
   },
 };
@@ -204,7 +204,7 @@ export const PermissionSheetHost = () => {
             {stage === 'blocked' ? `Turn on ${kind === 'sms' ? 'SMS' : 'Contacts'} in Android settings` : copy.title}
           </Text>
           <Text style={[styles.reason, { color: colors.textSecondary }]}>
-            {stage === 'blocked' ? 'Android won’t show its prompt again, so it has to be switched on from TxnTrace’s app settings.' : copy.reason}
+            {stage === 'blocked' ? 'Android won’t show its prompt again, so it has to be switched on from Transaction Trace’s app settings.' : copy.reason}
           </Text>
 
           {stage === 'blocked' ? (

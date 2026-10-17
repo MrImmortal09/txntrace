@@ -86,7 +86,7 @@ const PasteSMSModal = ({ visible, onClose, onSuccess }: Props) => {
       if (result.duplicate) {
         Alert.alert(
           'Already Recorded',
-          'This transaction was already added to TxnTrace previously.',
+          'This transaction was already added to Transaction Trace previously.',
           [{ text: 'OK', onPress: () => { reset(); onSuccess(); } }]
         );
       } else {

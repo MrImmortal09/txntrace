@@ -577,31 +577,28 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
 export const SmsFlowDemo = ({ active }: { active: boolean }) => {
   const { colors } = useTheme();
   const reduceMotion = useReduceMotion();
-  // Everything starts fully drawn, so the slide never looks empty while it's
-  // being swiped in; the loop then fades it out and rebuilds it step by step.
-  const bubble = useRef(new Animated.Value(1)).current;
-  const arrow = useRef(new Animated.Value(1)).current;
-  const result = useRef(new Animated.Value(1)).current;
+  // The SMS is there from the start, so the slide never looks empty while it's
+  // being swiped in. The first time the slide lands, the parsed row appears
+  // under it once and then stays put, even if the slide is visited again.
+  const arrow = useRef(new Animated.Value(0)).current;
+  const result = useRef(new Animated.Value(0)).current;
+  const played = useRef(false);
 
-  const build = useCallback(
-    () =>
-      Animated.sequence([
-        Animated.delay(1800),
-        Animated.parallel([timing(bubble, 0, 300, true), timing(arrow, 0, 300, true), timing(result, 0, 300, true)]),
-        Animated.delay(250),
-        timing(bubble, 1, 400, true),
-        Animated.delay(250),
-        timing(arrow, 1, 250, true),
-        timing(result, 1, 350, true),
-      ]),
-    [bubble, arrow, result]
-  );
-  const reset = useCallback(() => {
-    bubble.setValue(1);
-    arrow.setValue(1);
-    result.setValue(1);
-  }, [bubble, arrow, result]);
-  useHintLoop(active && !reduceMotion, build, reset);
+  useEffect(() => {
+    if (!active || played.current) return;
+    played.current = true;
+    if (reduceMotion) {
+      arrow.setValue(1);
+      result.setValue(1);
+      return;
+    }
+    // Not stopped if the slide is swiped away early, so it's never left half-drawn.
+    Animated.sequence([
+      Animated.delay(500),
+      timing(arrow, 1, 250, true),
+      timing(result, 1, 350, true),
+    ]).start();
+  }, [active, reduceMotion, arrow, result]);
 
   const rise = (v: Animated.Value) => ({
     opacity: v,
@@ -611,19 +608,19 @@ export const SmsFlowDemo = ({ active }: { active: boolean }) => {
 
   return (
     <View style={styles.demo}>
-      <Animated.View style={[styles.smsBubble, { backgroundColor: colors.surface, borderColor: colors.border }, rise(bubble)]}>
+      <View style={[styles.smsBubble, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <Text style={[styles.smsSender, { color: colors.textSecondary }]}>VM-HDFCBK</Text>
         <Text style={[styles.smsText, { color: colors.textSecondary }]}>
           Sent <Text style={strong}>Rs.349.00</Text> from HDFC Bank A/c <Text style={strong}>XX1234</Text> to{' '}
           <Text style={strong}>SWIGGY</Text> on 17-10-26. UPI Ref <Text style={strong}>529817364012</Text>
         </Text>
-      </Animated.View>
+      </View>
 
       <Animated.View style={[styles.arrowRow, { opacity: arrow }]}>
         <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.primary} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <Polyline points="6 9 12 15 18 9" />
         </Svg>
-        <Text style={[styles.arrowText, { color: colors.primary }]}>TxnTrace reads the highlighted parts</Text>
+        <Text style={[styles.arrowText, { color: colors.primary }]}>Transaction Trace reads the highlighted parts</Text>
       </Animated.View>
 
       <Animated.View style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }, rise(result)]}>
