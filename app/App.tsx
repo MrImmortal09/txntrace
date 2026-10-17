@@ -11,13 +11,30 @@ import { setupDatabase } from './src/db/schema';
 import { checkNewMessages } from './src/services/smsIngest';
 import { checkForAppUpdate } from './src/services/playStoreUpdate';
 import { rematchAfterMatcherUpdate } from './src/services/creditCards';
+import { hasSeenTutorial, markTutorialSeen } from './src/services/onboarding';
+import OnboardingTutorial from './src/components/onboarding/OnboardingTutorial';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
+
+const requestPermissions = async () => {
+  if (Platform.OS === 'android') {
+    try {
+      await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.READ_SMS,
+        PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
+        PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
+      ]);
+    } catch (err) {
+      console.warn(err);
+    }
+  }
+};
 
 function MainApp() {
   const { isDark, colors } = useTheme();
   const [dbInitialized, setDbInitialized] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
+  const [showTutorial, setShowTutorial] = useState(false);
 
   useEffect(() => {
     // Check for Google Play updates on launch and foreground resume
@@ -33,24 +50,18 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    const requestPermissions = async () => {
-      if (Platform.OS === 'android') {
-        try {
-          await PermissionsAndroid.requestMultiple([
-            PermissionsAndroid.PERMISSIONS.READ_SMS,
-            PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
-            PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
-          ]);
-        } catch (err) {
-          console.warn(err);
-        }
-      }
-    };
-
     const initDb = async () => {
       try {
-        await requestPermissions();
         await setupDatabase();
+        // First launch: the tutorial explains why SMS access is needed, so the
+        // permission prompts wait until it's done. If the flag can't be read,
+        // don't hold the app up with a tutorial.
+        const seenTutorial = await hasSeenTutorial().catch(() => true);
+        if (seenTutorial) {
+          await requestPermissions();
+        } else {
+          setShowTutorial(true);
+        }
         setDbInitialized(true);
         // In the background: a big SMS backlog shouldn't hold up launch, and a
         // failure isn't fatal — spends just stay unlinked until a card is re-saved.
@@ -73,6 +84,12 @@ function MainApp() {
     });
     return () => { subscription.remove(); };
   }, [dbInitialized]);
+
+  const finishTutorial = () => {
+    setShowTutorial(false);
+    markTutorialSeen().catch(e => console.error('Failed to save tutorial progress:', e));
+    requestPermissions();
+  };
 
   if (!dbInitialized) {
     return (
@@ -99,6 +116,7 @@ function MainApp() {
       <NavigationContainer>
         <TabNavigator />
       </NavigationContainer>
+      <OnboardingTutorial visible={showTutorial} onDone={finishTutorial} />
     </SafeAreaProvider>
   );
 }
