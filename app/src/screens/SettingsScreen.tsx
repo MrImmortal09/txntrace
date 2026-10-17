@@ -21,6 +21,7 @@ import { reparseStoredMessages } from '../services/reparseMessages';
 import { checkForAppUpdate, useUpdateStatus } from '../services/playStoreUpdate';
 import { useTheme } from '../theme/ThemeProvider';
 import { OTPLoginModal } from '../components/OTPLoginModal';
+import { useShowTutorial } from '../components/onboarding/TutorialContext';
 
 // Subscribes on its own so download progress doesn't re-render the whole screen
 const UpdateStatusHint = () => {
@@ -46,6 +47,7 @@ const SettingsScreen = () => {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<'sync' | 'backup' | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const showTutorial = useShowTutorial();
 
   useEffect(() => {
     // No need to load serverUrl anymore
@@ -334,6 +336,19 @@ const SettingsScreen = () => {
             <Text style={[styles.themeOptionText, themePreference === 'dark' ? { color: '#fff' } : { color: colors.text }]}>Dark</Text>
           </TouchableOpacity>
         </View>
+      </View>
+
+      <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Help</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>
+          A quick tour of every tab, including how swiping works
+        </Text>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, { borderColor: colors.border }]}
+          onPress={showTutorial}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Show App Tutorial</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>

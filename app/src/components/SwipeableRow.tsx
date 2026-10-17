@@ -1,13 +1,12 @@
 import React, { useRef } from 'react';
 import { View, Text, StyleSheet, Animated, PanResponder } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
+import { ROW_SWIPE_THRESHOLD } from '../constants/gestures';
 
 interface Props {
   onSwipeRight: () => void;
   children: React.ReactNode;
 }
-
-const SWIPE_THRESHOLD = 40;
 
 /**
  * Built on core PanResponder/Animated rather than react-native-gesture-handler
@@ -28,7 +27,7 @@ const SwipeableRow = ({ onSwipeRight, children }: Props) => {
         if (gesture.dx > 0) pan.setValue({ x: gesture.dx, y: 0 });
       },
       onPanResponderRelease: (_, gesture) => {
-        if (gesture.dx > SWIPE_THRESHOLD) {
+        if (gesture.dx > ROW_SWIPE_THRESHOLD) {
           Animated.parallel([
             Animated.timing(pan, { toValue: { x: 500, y: 0 }, duration: 200, useNativeDriver: false }),
             Animated.timing(rowOpacity, { toValue: 0, duration: 200, useNativeDriver: false }),
