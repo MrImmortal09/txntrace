@@ -8,6 +8,8 @@ interface Props {
   transaction: TransactionRow;
   onCancel: () => void;
   onSaved: (updated: TransactionRow) => void;
+  /** Whether anything differs from what's saved, so closing can ask first. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 // Older rows may hold a category's name rather than its id.
@@ -15,10 +17,13 @@ const matches = (stored: string | null, category: Category) =>
   !!stored && (stored === category.id || stored.toLowerCase() === category.name.toLowerCase());
 
 /** Category and note for a spend that's already been cleared, shown inside the detail sheet. */
-const TransactionEditForm = ({ transaction, onCancel, onSaved }: Props) => {
+const TransactionEditForm = ({ transaction, onCancel, onSaved, onDirtyChange }: Props) => {
   const { colors } = useTheme();
   const [categories, setCategories] = useState<Category[]>([]);
-  const [category, setCategory] = useState<string | null>(null);
+  // Starts as what's saved, so a Save before the list loads (or if it fails
+  // to) can't wipe the category.
+  const [saved, setSaved] = useState(transaction.category);
+  const [category, setCategory] = useState(transaction.category);
   const [note, setNote] = useState(transaction.note ?? '');
   const [saving, setSaving] = useState(false);
 
@@ -26,10 +31,18 @@ const TransactionEditForm = ({ transaction, onCancel, onSaved }: Props) => {
     loadCategories()
       .then(list => {
         setCategories(list);
-        setCategory(list.find(c => matches(transaction.category, c))?.id ?? transaction.category);
+        // Point at the chip's id even when the row holds the category's name.
+        const id = list.find(c => matches(transaction.category, c))?.id ?? transaction.category;
+        setSaved(id);
+        setCategory(current => (current === transaction.category ? id : current));
       })
       .catch(e => console.error('Failed to load categories:', e));
   }, [transaction.category]);
+
+  const dirty = category !== saved || note.trim() !== (transaction.note ?? '').trim();
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const save = async () => {
     setSaving(true);
@@ -76,7 +89,6 @@ const TransactionEditForm = ({ transaction, onCancel, onSaved }: Props) => {
         placeholder="What was this for?"
         placeholderTextColor={colors.textSecondary}
         multiline
-        maxLength={300}
       />
 
       <View style={styles.buttons}>

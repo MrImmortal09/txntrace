@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, AppState, Linking, Permission, PermissionsAndroid, Platform } from 'react-native';
+import { Alert, AppState, Linking, NativeEventSubscription, Permission, PermissionsAndroid, Platform } from 'react-native';
 import Contacts from 'react-native-contacts';
 
 /**
@@ -18,7 +18,7 @@ export const ANDROID_PERMISSIONS: Record<PermissionKind, Permission> = {
   contacts: PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
 };
 
-// iOS 18 can grant access to only some contacts, which is enough to split with them.
+// iOS can grant access to only some contacts, which is enough to split with them.
 const isContactsAllowed = (status: string) => status === 'authorized' || status === 'limited';
 
 // PermissionSheetHost, mounted once in App, registers here so a request from
@@ -36,13 +36,35 @@ const requestAndroid = async (kind: PermissionKind): Promise<boolean> => {
   return (await PermissionsAndroid.request(permission)) === PermissionsAndroid.RESULTS.GRANTED;
 };
 
-// Screens showing the SMS banner hear about a grant made from any of them.
+// Screens showing the SMS banner hear about a grant made from any of them,
+// through one shared check rather than one per screen.
 const smsListeners = new Set<(granted: boolean) => void>();
+let appStateSub: NativeEventSubscription | null = null;
+
+const checkSms = () => PermissionsAndroid.check(ANDROID_PERMISSIONS.sms);
 
 const refreshSmsAccess = async () => {
-  if (Platform.OS !== 'android') return;
-  const granted = await PermissionsAndroid.check(ANDROID_PERMISSIONS.sms);
+  if (Platform.OS !== 'android' || smsListeners.size === 0) return;
+  const granted = await checkSms();
   smsListeners.forEach(listener => listener(granted));
+};
+
+const watchSmsAccess = (listener: (granted: boolean) => void) => {
+  smsListeners.add(listener);
+  checkSms().then(listener).catch(() => {});
+  // Coming back from system settings is the usual way it changes.
+  if (!appStateSub) {
+    appStateSub = AppState.addEventListener('change', state => {
+      if (state === 'active') refreshSmsAccess().catch(() => {});
+    });
+  }
+  return () => {
+    smsListeners.delete(listener);
+    if (smsListeners.size === 0) {
+      appStateSub?.remove();
+      appStateSub = null;
+    }
+  };
 };
 
 /** Android only: new bank SMS reach the app only with RECEIVE_SMS. iOS uses Shortcuts instead. */
@@ -64,16 +86,7 @@ export const useSmsAccess = () => {
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    smsListeners.add(setGranted);
-    refreshSmsAccess().catch(() => {});
-    // Coming back from system settings is the usual way it changes.
-    const sub = AppState.addEventListener('change', state => {
-      if (state === 'active') refreshSmsAccess().catch(() => {});
-    });
-    return () => {
-      smsListeners.delete(setGranted);
-      sub.remove();
-    };
+    return watchSmsAccess(setGranted);
   }, []);
 
   return granted;
@@ -88,9 +101,11 @@ export const requestContactsAccess = async (): Promise<boolean> => {
   try {
     if (Platform.OS === 'android') return await requestAndroid('contacts');
 
+    const status = await Contacts.checkPermission();
+    if (isContactsAllowed(status)) return true;
     // iOS shows its dialog only once; after "Don't Allow", Settings is the
     // only way back, so say how to get there.
-    if ((await Contacts.checkPermission()) === 'denied') {
+    if (status === 'denied') {
       Alert.alert(
         'Contacts access is off',
         'Contacts let you pick who you’re splitting a spend with, and match money a friend sends you to the right person.\n\n' +

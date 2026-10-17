@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import ReactTestRenderer, { act, ReactTestInstance } from 'react-test-renderer';
 import TransactionDetailModal, { TransactionRow } from '../src/components/TransactionDetailModal';
 import { clearTransactionData } from '../src/services/dataReset';
@@ -8,11 +9,13 @@ jest.mock('@op-engineering/op-sqlite', () => ({
 }));
 
 const mockQueries: { sql: string; params: any[] }[] = [];
+let mockCategoriesFail = false;
 jest.mock('../src/db/schema', () => ({
   db: {
     execute: jest.fn(async (sql: string, params: any[] = []) => {
       mockQueries.push({ sql, params });
       if (sql.includes('FROM categories')) {
+        if (mockCategoriesFail) throw new Error('categories unavailable');
         return {
           rows: [
             { id: 'bills', name: 'Bills' },
@@ -67,7 +70,23 @@ afterEach(() => {
   act(() => renderer?.unmount());
   renderer = null;
   mockQueries.length = 0;
+  mockCategoriesFail = false;
+  jest.restoreAllMocks();
 });
+
+const openEditor = async (transaction: TransactionRow, onClose = jest.fn()) => {
+  await act(async () => {
+    renderer = ReactTestRenderer.create(
+      <TransactionDetailModal transaction={transaction} onClose={onClose} onEdited={jest.fn()} />
+    );
+  });
+  const root = renderer!.root;
+  await press(root, 'Edit');
+  return { root, onClose };
+};
+
+const typeNote = (root: ReactTestInstance, text: string) =>
+  act(async () => root.find(node => node.props.placeholder === 'What was this for?').props.onChangeText(text));
 
 describe('editing a cleared spend', () => {
   test('saves a category and note, and hands back the updated row', async () => {
@@ -110,6 +129,67 @@ describe('editing a cleared spend', () => {
       node => typeof node.props.onPress === 'function' && textOf(node) === 'Bills'
     );
     expect(billsChip[billsChip.length - 1].props.accessibilityState).toEqual({ selected: true });
+  });
+});
+
+describe('editing keeps what it shouldn’t touch', () => {
+  test('a save when categories couldn’t load keeps the saved category', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockCategoriesFail = true;
+    const { root } = await openEditor({ ...spend, category: 'food' });
+    await typeNote(root, 'Team lunch');
+    await press(root, 'Save');
+
+    const update = mockQueries.find(q => q.sql.startsWith('UPDATE transactions SET category'));
+    expect(update?.params.slice(0, 2)).toEqual(['food', 'Team lunch']);
+  });
+
+  test('a note longer than 300 characters isn’t cut short', async () => {
+    const longNote = 'x'.repeat(500);
+    const { root } = await openEditor({ ...spend, note: longNote });
+    const input = root.find(node => node.props.placeholder === 'What was this for?');
+    expect(input.props.maxLength).toBeUndefined();
+    expect(input.props.value).toBe(longNote);
+  });
+});
+
+describe('leaving an edit', () => {
+  test('✕ with unsaved changes asks before discarding them', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { root, onClose } = await openEditor(spend);
+    await typeNote(root, 'Changed my mind');
+    await press(root, '✕');
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(alert).toHaveBeenCalledWith('Discard changes?', expect.any(String), expect.any(Array));
+    const discard = alert.mock.calls[0][2]!.find(b => b.text === 'Discard');
+    await act(async () => discard!.onPress!());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('✕ with nothing changed closes straight away', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const { root, onClose } = await openEditor(spend);
+    await press(root, '✕');
+    expect(alert).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('a tap outside the card doesn’t close it mid-edit', async () => {
+    const { root, onClose } = await openEditor(spend);
+    await typeNote(root, 'Half typed');
+    const backdrop = root.findAll(node => node.props.activeOpacity === 1 && typeof node.props.onPress === 'function');
+    await act(async () => backdrop[0].props.onPress());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(root.find(node => node.props.placeholder === 'What was this for?').props.value).toBe('Half typed');
+  });
+
+  test('Android back steps out of editing instead of closing', async () => {
+    const { root, onClose } = await openEditor(spend);
+    const modal = root.find(node => typeof node.props.onRequestClose === 'function');
+    await act(async () => modal.props.onRequestClose());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(hasText(root, 'Edit')).toBe(true);
   });
 });
 

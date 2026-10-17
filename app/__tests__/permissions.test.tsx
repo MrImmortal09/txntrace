@@ -1,8 +1,8 @@
 import React from 'react';
-import { Linking, PermissionsAndroid, Platform } from 'react-native';
+import { AppState, Linking, PermissionsAndroid, Platform, Text } from 'react-native';
 import ReactTestRenderer, { act, ReactTestInstance } from 'react-test-renderer';
 import { PermissionSheetHost } from '../src/components/PermissionSheet';
-import { requestContactsAccess, requestSmsAccess } from '../src/services/permissions';
+import { requestContactsAccess, requestSmsAccess, useSmsAccess } from '../src/services/permissions';
 
 jest.mock('react-native-contacts', () => ({
   checkPermission: jest.fn(async () => 'authorized'),
@@ -116,6 +116,52 @@ describe('SMS access', () => {
       expect(request).toHaveBeenCalledWith(PermissionsAndroid.PERMISSIONS.READ_CONTACTS);
       expect(hasText(root, 'It wasn’t allowed. Tap below to see Android’s prompt again.')).toBe(true);
       expect(hasText(root, 'Try again')).toBe(true);
+    });
+
+    test('an answer that arrives after a newer request took over leaves that request alone', async () => {
+      jest.spyOn(PermissionsAndroid, 'check').mockResolvedValue(false);
+      let answerFirst: (result: string) => void = () => {};
+      jest
+        .spyOn(PermissionsAndroid, 'request')
+        .mockImplementationOnce(() => new Promise<any>(resolve => (answerFirst = resolve)));
+      const root = await mountHost();
+
+      let first: Promise<boolean> | undefined;
+      let secondSettled = false;
+      await act(async () => {
+        first = requestContactsAccess();
+      });
+      // Android's prompt is up for the first request...
+      const allow = root.findAll(n => typeof n.props.onPress === 'function' && textOf(n) === 'Allow contacts');
+      act(() => {
+        allow[allow.length - 1].props.onPress();
+      });
+      // ...when a second request takes over the sheet.
+      await act(async () => {
+        requestContactsAccess().then(() => (secondSettled = true));
+      });
+      await act(async () => answerFirst('granted'));
+
+      await expect(first).resolves.toBe(false);
+      expect(secondSettled).toBe(false);
+      expect(hasText(root, 'Pick friends from your contacts')).toBe(true);
+    });
+
+    test('screens showing the SMS banner share one foreground listener', async () => {
+      jest.spyOn(PermissionsAndroid, 'check').mockResolvedValue(true);
+      // The preset's AppState is already a shared jest.fn, so drop earlier tests' calls.
+      const addListener = jest.spyOn(AppState, 'addEventListener');
+      addListener.mockClear();
+      const Probe = () => <Text>{String(useSmsAccess())}</Text>;
+      await act(async () => {
+        renderer = ReactTestRenderer.create(
+          <>
+            <Probe />
+            <Probe />
+          </>
+        );
+      });
+      expect(addListener.mock.calls.filter(([event]) => event === 'change')).toHaveLength(1);
     });
 
     test('already allowed: no sheet at all', async () => {

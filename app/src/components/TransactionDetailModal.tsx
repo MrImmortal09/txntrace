@@ -11,6 +11,8 @@ import {
   Platform,
   Animated,
   KeyboardAvoidingView,
+  Alert,
+  Keyboard,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
 import { openLocationInGoogleMaps } from '../utils/maps';
@@ -125,6 +127,10 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
   const { colors } = useTheme();
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const dirtyRef = useRef(false);
+  const trackDirty = useCallback((dirty: boolean) => {
+    dirtyRef.current = dirty;
+  }, []);
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTimerRef = useRef<any>(null);
 
@@ -140,9 +146,24 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
   const transactionId = transaction?.id;
   useEffect(() => {
     setEditing(false);
+    dirtyRef.current = false;
   }, [transactionId]);
 
   if (!transaction) return null;
+
+  const stopEditing = () => {
+    dirtyRef.current = false;
+    setEditing(false);
+  };
+
+  // Leaving mid-edit asks first when there's something unsaved.
+  const leaveEdit = (then: () => void) => {
+    if (!editing || !dirtyRef.current) return then();
+    Alert.alert('Discard changes?', 'Your category and note changes haven’t been saved.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: then },
+    ]);
+  };
 
   const handleCopy = (text: string | null | undefined, label: string) => {
     if (!text) return;
@@ -193,9 +214,20 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
   })();
 
   return (
-    <Modal visible={!!transaction} animationType="fade" transparent onRequestClose={onClose}>
+    <Modal
+      visible={!!transaction}
+      animationType="fade"
+      transparent
+      // Android back steps out of editing before it closes the sheet.
+      onRequestClose={() => (editing ? leaveEdit(stopEditing) : onClose())}
+    >
       <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+        {/* While editing, a tap outside only puts the keyboard away. */}
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={() => (editing ? Keyboard.dismiss() : onClose())}
+        />
         <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
           {/* Header with Merchant Name */}
           <View style={styles.header}>
@@ -222,7 +254,7 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
                   <Text style={[styles.editButtonText, { color: colors.primary }]}>Edit</Text>
                 </TouchableOpacity>
               ) : null}
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity onPress={() => leaveEdit(onClose)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <Text style={[styles.closeButton, { color: colors.textSecondary }]}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -276,9 +308,10 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
           {editing ? (
             <TransactionEditForm
               transaction={transaction}
-              onCancel={() => setEditing(false)}
+              onCancel={stopEditing}
+              onDirtyChange={trackDirty}
               onSaved={updated => {
-                setEditing(false);
+                stopEditing();
                 onEdited?.(updated);
               }}
             />

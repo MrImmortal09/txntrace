@@ -108,6 +108,9 @@ export const PermissionSheetHost = () => {
   const [request, setRequest] = useState<Request | null>(null);
   const [stage, setStage] = useState<Stage>('explain');
   const [asking, setAsking] = useState(false);
+  // The request on screen right now, for code that resumes after an await.
+  const activeRef = useRef<Request | null>(null);
+  activeRef.current = request;
   // Keeps the content in place while the sheet slides away.
   const lastKind = useRef<PermissionKind>('sms');
   if (request) lastKind.current = request.kind;
@@ -128,9 +131,15 @@ export const PermissionSheetHost = () => {
     return () => registerPermissionPrompt(null);
   }, []);
 
+  // Answers one request, and closes the sheet only if that request is still
+  // the one showing; a newer one keeps its sheet and its pending answer.
+  const settle = (req: Request, granted: boolean) => {
+    req.resolve(granted);
+    setRequest(current => (current === req ? null : current));
+  };
+
   const finish = (granted: boolean) => {
-    request?.resolve(granted);
-    setRequest(null);
+    if (request) settle(request, granted);
   };
 
   // Back from system settings (or Android's own prompt) with it allowed.
@@ -140,30 +149,32 @@ export const PermissionSheetHost = () => {
       if (state !== 'active') return;
       if (await PermissionsAndroid.check(ANDROID_PERMISSIONS[request.kind]).catch(() => false)) {
         blocked.delete(request.kind);
-        request.resolve(true);
-        setRequest(current => (current === request ? null : current));
+        settle(request, true);
       }
     });
     return () => sub.remove();
   }, [request]);
 
   const allow = async () => {
-    if (!request) return;
+    const req = request;
+    if (!req) return;
     setAsking(true);
     try {
-      const result = await PermissionsAndroid.request(ANDROID_PERMISSIONS[request.kind]);
-      if (result === PermissionsAndroid.RESULTS.GRANTED) {
-        blocked.delete(request.kind);
-        finish(true);
-      } else if (result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
-        blocked.add(request.kind);
-        setStage('blocked');
-      } else {
-        setStage('denied');
+      const result = await PermissionsAndroid.request(ANDROID_PERMISSIONS[req.kind]);
+      const granted = result === PermissionsAndroid.RESULTS.GRANTED;
+      if (granted) blocked.delete(req.kind);
+      if (result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) blocked.add(req.kind);
+      // Answered after another request took over the sheet: settle this one
+      // and leave the sheet to the newer request.
+      if (activeRef.current !== req) {
+        req.resolve(granted);
+        return;
       }
+      if (granted) settle(req, true);
+      else setStage(result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN ? 'blocked' : 'denied');
     } catch (error) {
       console.warn('Permission request failed:', error);
-      setStage('denied');
+      if (activeRef.current === req) setStage('denied');
     } finally {
       setAsking(false);
     }

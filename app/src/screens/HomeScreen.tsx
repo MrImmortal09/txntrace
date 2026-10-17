@@ -789,7 +789,9 @@ const HomeScreen = () => {
         onClose={() => setSelectedTxn(null)}
         onEdited={updated => {
           setSelectedTxn(updated);
-          loadDashboardData();
+          // Only category and note change, so patch the one row in place;
+          // the chart and grouping recompute from it.
+          setAllMineSpends(prev => prev.map(t => (t.id === updated.id ? updated : t)));
         }}
       />
     </SafeAreaView>

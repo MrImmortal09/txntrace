@@ -12,7 +12,7 @@ import { checkNewMessages } from './src/services/smsIngest';
 import { checkForAppUpdate } from './src/services/playStoreUpdate';
 import { rematchAfterMatcherUpdate } from './src/services/creditCards';
 import { markTutorialSeen, shouldShowTutorial } from './src/services/onboarding';
-import { requestSmsAccess } from './src/services/permissions';
+import { requestContactsAccess, requestSmsAccess } from './src/services/permissions';
 import OnboardingTutorial from './src/components/onboarding/OnboardingTutorial';
 import { TutorialContext } from './src/components/onboarding/TutorialContext';
 import { PermissionSheetHost } from './src/components/PermissionSheet';
@@ -81,7 +81,12 @@ function MainApp() {
     setTutorial('hidden');
     if (tutorial !== 'firstRun') return;
     markTutorialSeen().catch(e => console.error('Failed to save tutorial progress:', e));
-    requestSmsAccess();
+    // One after the other, each with its reason. Contacts now rather than at
+    // the first split, so a payer whose name matches a contact is matched
+    // without picking them (the Friends slide says this is coming).
+    requestSmsAccess()
+      .then(() => requestContactsAccess())
+      .catch(e => console.warn('Permission requests after the tutorial failed:', e));
   };
 
   if (!dbInitialized) {

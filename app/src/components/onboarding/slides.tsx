@@ -127,6 +127,7 @@ export const SLIDES: Slide[] = [
       { icon: '➕', lead: 'The + button', text: 'starts a balance with someone you haven’t split with yet.' },
     ],
     Visual: FriendsVisual,
+    footnote: 'After the tour, TxnTrace asks for your contacts, so you can pick friends and their payments match to them.',
   },
   {
     key: 'home',

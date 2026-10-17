@@ -290,12 +290,13 @@ export const autoMatchCreditTransaction = async (
     }
   }
 
-  // 3. Check device contacts
+  // 3. Check device contacts. Only checks access, never asks: when this finds
+  // nothing, the caller opens the contact picker, which asks if needed.
   try {
     const Contacts = require('react-native-contacts');
     const ContactsModule = Contacts.default || Contacts;
-    const perm = await ContactsModule.checkPermission();
-    if (perm === 'authorized' && rawName) {
+    const { hasContactsAccess } = require('./permissions');
+    if (rawName && (await hasContactsAccess())) {
       const allContacts = await ContactsModule.getAll();
       const normRaw = normalizeName(rawName);
       const matched = allContacts.find((c: any) => {
