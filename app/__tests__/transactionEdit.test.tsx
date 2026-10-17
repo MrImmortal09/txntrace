@@ -2,7 +2,7 @@ import React from 'react';
 import { Alert } from 'react-native';
 import ReactTestRenderer, { act, ReactTestInstance } from 'react-test-renderer';
 import TransactionDetailModal, { TransactionRow } from '../src/components/TransactionDetailModal';
-import { clearTransactionData } from '../src/services/dataReset';
+import { resetAppData } from '../src/services/dataReset';
 
 jest.mock('@op-engineering/op-sqlite', () => ({
   open: jest.fn(() => ({ execute: jest.fn() })),
@@ -11,6 +11,7 @@ jest.mock('@op-engineering/op-sqlite', () => ({
 const mockQueries: { sql: string; params: any[] }[] = [];
 let mockCategoriesFail = false;
 jest.mock('../src/db/schema', () => ({
+  DEFAULT_CATEGORIES_SQL: 'INSERT default categories',
   db: {
     execute: jest.fn(async (sql: string, params: any[] = []) => {
       mockQueries.push({ sql, params });
@@ -193,14 +194,21 @@ describe('leaving an edit', () => {
   });
 });
 
-describe('Delete All Transactions', () => {
-  test('also clears the splits, settlements and payer names built on them', async () => {
-    await clearTransactionData();
+describe('Reset App', () => {
+  test('empties every table, then puts the default categories back', async () => {
+    await resetAppData();
     expect(mockQueries.map(q => q.sql)).toEqual([
       'DELETE FROM splits',
       'DELETE FROM settlements',
       'DELETE FROM contact_aliases',
+      'DELETE FROM reward_entries',
+      'DELETE FROM card_statements',
+      'DELETE FROM sms_log',
       'DELETE FROM transactions',
+      'DELETE FROM cards',
+      'DELETE FROM categories',
+      'DELETE FROM app_settings',
+      'INSERT default categories',
     ]);
   });
 });

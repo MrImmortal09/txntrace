@@ -28,7 +28,7 @@ struct IngestSMSError: Error, CustomLocalizedStringResourceConvertible {
 struct IngestSMSIntent: AppIntent {
     static var title: LocalizedStringResource = "Save Transaction SMS"
     static var description = IntentDescription(
-        "Passes a bank SMS to Transaction Trace for parsing. Runs in the background without opening the app."
+        "Passes a bank SMS to TxnTrace for parsing. Runs in the background without opening the app."
     )
 
     // Headless: the whole point is that the automation never interrupts the user.
@@ -100,7 +100,7 @@ enum SMSInboxWriter {
 
     static func append(_ record: [String: Any]) throws {
         guard let url = SMSInbox.fileURL else {
-            throw IngestSMSError(reason: "Transaction Trace could not open its shared App Group container.")
+            throw IngestSMSError(reason: "TxnTrace could not open its shared App Group container.")
         }
 
         let parentDir = url.deletingLastPathComponent()

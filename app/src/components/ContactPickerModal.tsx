@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, SafeAreaView, TextInput } from 'react-native';
-import Contacts from 'react-native-contacts';
-import { requestContactsAccess } from '../services/permissions';
+import { contactName, useDeviceContacts } from '../services/deviceContacts';
 import { useTheme } from '../theme/ThemeProvider';
+import ContactListEmpty from './ContactListEmpty';
 
 export interface PickedContact {
   id: string;
@@ -18,28 +18,11 @@ interface Props {
 
 const ContactPickerModal = ({ visible, title, onCancel, onSelect }: Props) => {
   const { colors } = useTheme();
-  const [contacts, setContacts] = useState<any[]>([]);
+  const { contacts, allowed, retry } = useDeviceContacts(visible);
   const [query, setQuery] = useState('');
-  // null until asked, so the list doesn't flash "access is off" while asking.
-  const [allowed, setAllowed] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    if (visible) loadContacts();
-  }, [visible]);
-
-  const loadContacts = async () => {
-    try {
-      const granted = await requestContactsAccess();
-      setAllowed(granted);
-      if (granted) setContacts(await Contacts.getAll());
-    } catch (error) {
-      console.error('Failed to load contacts:', error);
-    }
-  };
-
-  const nameOf = (c: any) => c.displayName || `${c.givenName} ${c.familyName}`.trim();
   const filtered = query
-    ? contacts.filter(c => nameOf(c).toLowerCase().includes(query.toLowerCase()))
+    ? contacts.filter(c => contactName(c).toLowerCase().includes(query.toLowerCase()))
     : contacts;
 
   return (
@@ -66,29 +49,12 @@ const ContactPickerModal = ({ visible, title, onCancel, onSelect }: Props) => {
           renderItem={({ item }) => (
             <TouchableOpacity
               style={[styles.row, { borderBottomColor: colors.border }]}
-              onPress={() => onSelect({ id: item.recordID, name: nameOf(item) })}
+              onPress={() => onSelect({ id: item.recordID, name: contactName(item) })}
             >
-              <Text style={[styles.rowText, { color: colors.text }]}>{nameOf(item)}</Text>
+              <Text style={[styles.rowText, { color: colors.text }]}>{contactName(item)}</Text>
             </TouchableOpacity>
           )}
-          ListEmptyComponent={
-            allowed === false ? (
-              <View style={styles.empty}>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  Contacts access is off, so there’s no one to pick from yet.
-                </Text>
-                <TouchableOpacity
-                  style={[styles.allowButton, { backgroundColor: colors.primary }]}
-                  onPress={loadContacts}
-                  accessibilityRole="button"
-                >
-                  <Text style={[styles.allowButtonText, { color: colors.onPrimary }]}>Allow contacts</Text>
-                </TouchableOpacity>
-              </View>
-            ) : allowed ? (
-              <Text style={[styles.emptyText, styles.empty, { color: colors.textSecondary }]}>No contacts found.</Text>
-            ) : undefined
-          }
+          ListEmptyComponent={<ContactListEmpty allowed={allowed} onAllow={retry} />}
         />
       </SafeAreaView>
     </Modal>
@@ -103,10 +69,6 @@ const styles = StyleSheet.create({
   search: { margin: 16, borderRadius: 10, padding: 12, fontSize: 15 },
   row: { paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1 },
   rowText: { fontSize: 16 },
-  empty: { alignItems: 'center', marginTop: 40, paddingHorizontal: 32 },
-  emptyText: { textAlign: 'center', fontSize: 15, lineHeight: 21 },
-  allowButton: { marginTop: 16, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 20 },
-  allowButtonText: { fontSize: 15, fontWeight: '700' },
 });
 
 export default ContactPickerModal;

@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleProp, StyleSheet, Text, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
 import { requestSmsAccess, useSmsAccess } from '../services/permissions';
+import { APP_NAME } from '../constants/appName';
 
 /**
  * Android only: says SMS capture is off, and why it matters, instead of the
@@ -18,7 +19,7 @@ const SmsAccessBanner = ({ style }: { style?: StyleProp<ViewStyle> }) => {
       <View style={styles.text}>
         <Text style={[styles.title, { color: colors.text }]}>SMS access is off</Text>
         <Text style={[styles.body, { color: colors.textSecondary }]}>
-          Transaction Trace needs it to add bank SMS to Daily as they arrive.
+          {APP_NAME} needs it to add bank SMS to Daily as they arrive.
         </Text>
       </View>
       <TouchableOpacity

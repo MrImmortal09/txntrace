@@ -44,6 +44,12 @@ jest.mock('shared-sms-store', () => ({
   getIngestStats: jest.fn(),
 }));
 
+// Credits look payers up in contacts; with access off that step is skipped.
+jest.mock('react-native-contacts', () => ({
+  checkPermission: jest.fn(async () => 'denied'),
+  getAll: jest.fn(async () => []),
+}));
+
 describe('SMS Ingestion and Batch Processing', () => {
   beforeEach(() => {
     jest.clearAllMocks();

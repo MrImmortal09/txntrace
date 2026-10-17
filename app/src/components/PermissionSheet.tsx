@@ -5,9 +5,10 @@ import Svg, { Path, Polyline } from 'react-native-svg';
 import { useTheme } from '../theme/ThemeProvider';
 import { IconFriends } from './TabIcons';
 import { ANDROID_PERMISSIONS, PermissionKind, registerPermissionPrompt } from '../services/permissions';
+import { APP_NAME, APP_NAME_FULL } from '../constants/appName';
 
 /**
- * Android's permission flow, explained. Opens with why Transaction Trace wants the
+ * Android's permission flow, explained. Opens with why TxnTrace wants the
  * permission, then shows Android's own prompt. If Android has stopped asking
  * (refused twice), it switches to step-by-step directions for turning it on
  * in system settings, and closes by itself once the person comes back with
@@ -31,9 +32,8 @@ interface Copy {
 
 const COPY: Record<PermissionKind, Copy> = {
   sms: {
-    title: 'Let TxnTrace see bank SMS',
-    reason:
-      'Your bank texts you after every spend. With SMS access, Transaction Trace adds each one to Daily as it arrives, so you don’t have to type them in.',
+    title: `Let ${APP_NAME} see bank SMS`,
+    reason: `Your bank texts you after every spend. With SMS access, ${APP_NAME_FULL} adds each one to Daily as it arrives, so you don’t have to type them in.`,
     points: [
       'Only new messages, from the moment you allow it',
       'Read on this phone. Nothing leaves it unless you use backup or sync',
@@ -44,7 +44,7 @@ const COPY: Record<PermissionKind, Copy> = {
       ['Tap ', 'Open settings', ' below'],
       ['Tap ', 'Permissions'],
       ['Tap ', 'SMS', ', then ', 'Allow'],
-      ['Come back here. Transaction Trace picks it up on its own'],
+      [`Come back here. ${APP_NAME} picks it up on its own`],
     ],
     // Android 13+ greys out SMS for apps installed outside the Play Store
     // until "restricted settings" are allowed for them.
@@ -66,7 +66,7 @@ const COPY: Record<PermissionKind, Copy> = {
       ['Tap ', 'Open settings', ' below'],
       ['Tap ', 'Permissions'],
       ['Tap ', 'Contacts', ', then ', 'Allow'],
-      ['Come back here. Transaction Trace picks it up on its own'],
+      [`Come back here. ${APP_NAME} picks it up on its own`],
     ],
   },
 };
@@ -74,6 +74,10 @@ const COPY: Record<PermissionKind, Copy> = {
 // Once Android says it won't ask again, later requests this session go
 // straight to the settings steps instead of a button that does nothing.
 const blocked = new Set<PermissionKind>();
+
+// Android answers at once when it won't show its prompt any more. Closing a
+// prompt that has just appeared takes a person longer than this.
+const NO_PROMPT_MS = 500;
 
 interface Request {
   kind: PermissionKind;
@@ -107,7 +111,10 @@ export const PermissionSheetHost = () => {
   const insets = useSafeAreaInsets();
   const [request, setRequest] = useState<Request | null>(null);
   const [stage, setStage] = useState<Stage>('explain');
-  const [asking, setAsking] = useState(false);
+  // The request whose Android prompt is up. Only its own button waits on it,
+  // so a newer request that takes over the sheet can still be answered.
+  const [askingFor, setAskingFor] = useState<Request | null>(null);
+  const asking = askingFor !== null && askingFor === request;
   // The request on screen right now, for code that resumes after an await.
   const activeRef = useRef<Request | null>(null);
   activeRef.current = request;
@@ -128,7 +135,12 @@ export const PermissionSheetHost = () => {
           setStage(blocked.has(next) ? 'blocked' : 'explain');
         })
     );
-    return () => registerPermissionPrompt(null);
+    return () => {
+      registerPermissionPrompt(null);
+      // With the sheet gone nothing can answer a request still on it, so
+      // settle it rather than leave its caller waiting forever.
+      activeRef.current?.resolve(false);
+    };
   }, []);
 
   // Answers one request, and closes the sheet only if that request is still
@@ -158,12 +170,20 @@ export const PermissionSheetHost = () => {
   const allow = async () => {
     const req = request;
     if (!req) return;
-    setAsking(true);
+    setAskingFor(req);
     try {
-      const result = await PermissionsAndroid.request(ANDROID_PERMISSIONS[req.kind]);
+      const permission = ANDROID_PERMISSIONS[req.kind];
+      // A prompt closed by tapping outside it or pressing back also comes
+      // back as "never ask again", though Android will still ask next time.
+      // So it only counts when the answer came too fast for any prompt to
+      // have been shown. A real final refusal gets "Try again" first, and
+      // that second answer comes back at once.
+      const askedAt = Date.now();
+      const result = await PermissionsAndroid.request(permission);
       const granted = result === PermissionsAndroid.RESULTS.GRANTED;
+      const neverAsks = result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN && Date.now() - askedAt < NO_PROMPT_MS;
       if (granted) blocked.delete(req.kind);
-      if (result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) blocked.add(req.kind);
+      if (neverAsks) blocked.add(req.kind);
       // Answered after another request took over the sheet: settle this one
       // and leave the sheet to the newer request.
       if (activeRef.current !== req) {
@@ -171,12 +191,12 @@ export const PermissionSheetHost = () => {
         return;
       }
       if (granted) settle(req, true);
-      else setStage(result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN ? 'blocked' : 'denied');
+      else setStage(neverAsks ? 'blocked' : 'denied');
     } catch (error) {
       console.warn('Permission request failed:', error);
       if (activeRef.current === req) setStage('denied');
     } finally {
-      setAsking(false);
+      setAskingFor(current => (current === req ? null : current));
     }
   };
 
@@ -204,7 +224,7 @@ export const PermissionSheetHost = () => {
             {stage === 'blocked' ? `Turn on ${kind === 'sms' ? 'SMS' : 'Contacts'} in Android settings` : copy.title}
           </Text>
           <Text style={[styles.reason, { color: colors.textSecondary }]}>
-            {stage === 'blocked' ? 'Android won’t show its prompt again, so it has to be switched on from Transaction Trace’s app settings.' : copy.reason}
+            {stage === 'blocked' ? `Android won’t show its prompt again, so it has to be switched on from ${APP_NAME}’s app settings.` : copy.reason}
           </Text>
 
           {stage === 'blocked' ? (

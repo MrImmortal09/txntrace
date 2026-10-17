@@ -5,8 +5,10 @@ export interface Category {
   name: string;
 }
 
+// In the order they were added, so the seeded list keeps Food first and Other
+// last. Review and Edit both use this, so their chips always match.
 export const loadCategories = async (): Promise<Category[]> => {
-  const res = await db.execute('SELECT id, name FROM categories ORDER BY name');
+  const res = await db.execute('SELECT id, name FROM categories ORDER BY rowid');
   const rows: any = res.rows;
   return rows?._array || rows || [];
 };

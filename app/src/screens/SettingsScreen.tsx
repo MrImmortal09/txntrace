@@ -19,11 +19,12 @@ import {
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
 import { hasContactsAccess } from '../services/permissions';
-import { clearTransactionData } from '../services/dataReset';
 import { checkForAppUpdate, useUpdateStatus } from '../services/playStoreUpdate';
 import { useTheme } from '../theme/ThemeProvider';
 import { OTPLoginModal } from '../components/OTPLoginModal';
 import { useShowTutorial } from '../components/onboarding/TutorialContext';
+import { useResetApp } from '../components/AppResetContext';
+import { APP_NAME, APP_NAME_FULL } from '../constants/appName';
 
 // Subscribes on its own so download progress doesn't re-render the whole screen
 const UpdateStatusHint = () => {
@@ -50,6 +51,7 @@ const SettingsScreen = () => {
   const [pendingAction, setPendingAction] = useState<'sync' | 'backup' | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const showTutorial = useShowTutorial();
+  const resetApp = useResetApp();
 
   useEffect(() => {
     // No need to load serverUrl anymore
@@ -288,24 +290,25 @@ const SettingsScreen = () => {
     }
   };
 
-  const confirmClearTransactions = () => {
+  const confirmResetApp = () => {
     Alert.alert(
-      'Delete all transactions?',
-      'Every transaction on this phone is deleted, along with friend splits and balances. ' +
-        'Cards, settings and the SMS log are kept, and anything already backed up to the server stays there.\n\n' +
-        'This can’t be undone.',
+      'Reset app?',
+      'All your data and transactions on this phone will be deleted: every transaction, friend split and balance, ' +
+        'card with its dues and rewards, the SMS log, and your settings. You’ll be signed out of web sync, and the ' +
+        `app starts over as if ${APP_NAME} was just installed.\n\n` +
+        'Backups already on the server stay there. This can’t be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Reset',
           style: 'destructive',
+          // On success the app starts over and this screen goes with it.
           onPress: async () => {
             try {
-              await clearTransactionData();
-              log('All transactions, splits and settlements deleted ✅');
+              await resetApp();
             } catch (e: any) {
-              log(`Delete FAILED: ${e.message}`);
-              Alert.alert('Delete failed', e.message || 'Nothing was deleted.');
+              log(`Reset FAILED: ${e.message}`);
+              Alert.alert('Reset failed', e.message || 'Nothing was deleted.');
             }
           },
         },
@@ -382,9 +385,9 @@ const SettingsScreen = () => {
         <>
           <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>1. Shortcuts automation</Text>
-            <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way Transaction Trace sees your bank SMS</Text>
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way {APP_NAME} sees your bank SMS</Text>
             <Text style={[styles.description, { color: colors.textSecondary }]}>
-              iOS has no API for reading messages directly, so you hand them to Transaction Trace with a
+              iOS has no API for reading messages directly, so you hand them to {APP_NAME_FULL} with a
               one-time automation. It runs in the background — nothing opens, nothing
               is sent anywhere.
             </Text>
@@ -537,9 +540,9 @@ const SettingsScreen = () => {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.button, styles.buttonSecondary, { borderColor: colors.danger }]}
-          onPress={confirmClearTransactions}
+          onPress={confirmResetApp}
         >
-          <Text style={[styles.buttonSecondaryText, { color: colors.danger }]}>Delete All Transactions</Text>
+          <Text style={[styles.buttonSecondaryText, { color: colors.danger }]}>Reset App</Text>
         </TouchableOpacity>
 
         {debugLog.length > 0 && (

@@ -14,6 +14,7 @@ import Svg, { Polyline } from 'react-native-svg';
 import { useTheme } from '../../theme/ThemeProvider';
 import BankIcon from '../BankIcon';
 import { DOUBLE_TAP_DELAY, ROW_SWIPE_THRESHOLD } from '../../constants/gestures';
+import { APP_NAME } from '../../constants/appName';
 
 /**
  * Practice versions of the app's real gestures for the first-run tutorial.
@@ -620,7 +621,7 @@ export const SmsFlowDemo = ({ active }: { active: boolean }) => {
         <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.primary} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <Polyline points="6 9 12 15 18 9" />
         </Svg>
-        <Text style={[styles.arrowText, { color: colors.primary }]}>Transaction Trace reads the highlighted parts</Text>
+        <Text style={[styles.arrowText, { color: colors.primary }]}>{APP_NAME} reads the highlighted parts</Text>
       </Animated.View>
 
       <Animated.View style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }, rise(result)]}>

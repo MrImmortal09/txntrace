@@ -16,12 +16,16 @@ import { requestContactsAccess, requestSmsAccess } from './src/services/permissi
 import OnboardingTutorial from './src/components/onboarding/OnboardingTutorial';
 import { TutorialContext } from './src/components/onboarding/TutorialContext';
 import { PermissionSheetHost } from './src/components/PermissionSheet';
+import { AppResetContext } from './src/components/AppResetContext';
+import { resetAppData } from './src/services/dataReset';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 
 function MainApp() {
-  const { isDark, colors } = useTheme();
+  const { isDark, colors, setThemePreference } = useTheme();
   const [dbInitialized, setDbInitialized] = useState(false);
+  // Bumped by Reset App so every screen remounts and reloads from scratch.
+  const [generation, setGeneration] = useState(0);
   const [smsError, setSmsError] = useState<string | null>(null);
   // A replay from Settings just closes; only the first-run tour also records
   // that it was seen and asks for permissions.
@@ -77,6 +81,17 @@ function MainApp() {
 
   const replayTutorial = useCallback(() => setTutorial('replay'), []);
 
+  // After the wipe, start over as a new install would: default theme, every
+  // screen reloaded from the now-empty database, and the first-run tour,
+  // which saves that it was seen and asks for permissions again.
+  const resetApp = useCallback(async () => {
+    await resetAppData();
+    setThemePreference('system');
+    setSmsError(null);
+    setGeneration(g => g + 1);
+    setTutorial('firstRun');
+  }, [setThemePreference]);
+
   const finishTutorial = () => {
     setTutorial('hidden');
     if (tutorial !== 'firstRun') return;
@@ -111,12 +126,14 @@ function MainApp() {
           </TouchableOpacity>
         </View>
       )}
-      <TutorialContext.Provider value={replayTutorial}>
-        <NavigationContainer>
-          <TabNavigator />
-        </NavigationContainer>
-      </TutorialContext.Provider>
-      <OnboardingTutorial visible={tutorial !== 'hidden'} onDone={finishTutorial} />
+      <AppResetContext.Provider value={resetApp}>
+        <TutorialContext.Provider value={replayTutorial}>
+          <NavigationContainer key={generation}>
+            <TabNavigator />
+          </NavigationContainer>
+        </TutorialContext.Provider>
+      </AppResetContext.Provider>
+      <OnboardingTutorial visible={tutorial !== 'hidden'} firstRun={tutorial === 'firstRun'} onDone={finishTutorial} />
       <PermissionSheetHost />
     </SafeAreaProvider>
   );

@@ -140,11 +140,43 @@ describe('SMS access', () => {
       await act(async () => {
         requestContactsAccess().then(() => (secondSettled = true));
       });
+      // The newer request's button doesn't wait on the earlier prompt.
+      const allowSecond = root.findAll(n => typeof n.props.onPress === 'function' && textOf(n) === 'Allow contacts');
+      expect(allowSecond[allowSecond.length - 1].props.disabled).toBe(false);
       await act(async () => answerFirst('granted'));
 
       await expect(first).resolves.toBe(false);
       expect(secondSettled).toBe(false);
       expect(hasText(root, 'Pick friends from your contacts')).toBe(true);
+    });
+
+    test('closing Android’s prompt without answering isn’t taken as “never ask again”', async () => {
+      jest.spyOn(PermissionsAndroid, 'check').mockResolvedValue(false);
+      // Android reports a dismissed prompt as never_ask_again too; what gives
+      // it away is that a person took a while to close it.
+      jest.spyOn(PermissionsAndroid, 'request').mockResolvedValue('never_ask_again');
+      let now = 0;
+      jest.spyOn(Date, 'now').mockImplementation(() => (now += 2000));
+      const root = await mountHost();
+
+      await act(async () => {
+        requestContactsAccess();
+      });
+      await press(root, 'Allow contacts');
+      expect(hasText(root, 'It wasn’t allowed. Tap below to see Android’s prompt again.')).toBe(true);
+      expect(hasText(root, 'Turn on Contacts in Android settings')).toBe(false);
+    });
+
+    test('a request still on the sheet when it goes away is answered no', async () => {
+      jest.spyOn(PermissionsAndroid, 'check').mockResolvedValue(false);
+      await mountHost();
+      let result: Promise<boolean> | undefined;
+      await act(async () => {
+        result = requestContactsAccess();
+      });
+      act(() => renderer?.unmount());
+      renderer = null;
+      await expect(result).resolves.toBe(false);
     });
 
     test('screens showing the SMS banner share one foreground listener', async () => {
