@@ -8,12 +8,17 @@ jest.mock('@op-engineering/op-sqlite', () => ({
   open: jest.fn(() => ({ execute: jest.fn() })),
 }));
 
-// app_settings only — the tutorial flag and theme are all these tests touch.
+// app_settings, plus whether there's any data yet — the tutorial flag, the
+// upgrade check and theme are all these tests touch.
 const mockSettings: Record<string, string> = {};
+let mockHasData = false;
 jest.mock('../src/db/schema', () => ({
   setupDatabase: jest.fn(async () => {}),
   db: {
     execute: jest.fn(async (query: string, params: any[] = []) => {
+      if (query.includes('FROM transactions')) {
+        return { rows: mockHasData ? [{ 1: 1 }] : [] };
+      }
       if (query.includes('SELECT value FROM app_settings')) {
         const value = mockSettings[params[0]];
         return { rows: value === undefined ? [] : [{ value }] };
@@ -56,9 +61,16 @@ jest.mock('@react-navigation/native', () => ({
   useRoute: () => ({ params: {} }),
 }));
 
-jest.mock('../src/screens/TabNavigator', () => ({
-  TabNavigator: () => null,
-}));
+// Stands in for the tabs with just Settings' "Show App Tutorial" button.
+jest.mock('../src/screens/TabNavigator', () => {
+  const { createElement } = require('react');
+  const { Text, TouchableOpacity } = require('react-native');
+  const { useShowTutorial } = require('../src/components/onboarding/TutorialContext');
+  return {
+    TabNavigator: () =>
+      createElement(TouchableOpacity, { onPress: useShowTutorial() }, createElement(Text, null, 'Show App Tutorial')),
+  };
+});
 
 const textOf = (node: ReactTestInstance): string =>
   node.children.map(child => (typeof child === 'string' ? child : textOf(child))).join('');
@@ -75,10 +87,11 @@ const press = async (root: ReactTestInstance, label: string) => {
   });
 };
 
-const flush = () =>
+const wait = (ms: number) =>
   act(async () => {
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    await new Promise<void>(resolve => setTimeout(resolve, ms));
   });
+const flush = () => wait(0);
 
 let renderer: ReactTestRenderer.ReactTestRenderer | null = null;
 
@@ -87,6 +100,7 @@ afterEach(() => {
   act(() => renderer?.unmount());
   renderer = null;
   Object.keys(mockSettings).forEach(key => delete mockSettings[key]);
+  mockHasData = false;
 });
 
 describe('OnboardingTutorial', () => {
@@ -126,15 +140,39 @@ describe('OnboardingTutorial', () => {
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 
+  test('opens on the first slide again after being closed partway', async () => {
+    const { root, onDone } = await open();
+    await press(root, 'Next');
+    await press(root, 'Next');
+    await act(async () => renderer!.update(<OnboardingTutorial visible={false} onDone={onDone} />));
+    await act(async () => renderer!.update(<OnboardingTutorial visible onDone={onDone} />));
+    expect(hasText(root, `1 of ${SLIDES.length}`)).toBe(true);
+  });
+
+  const openReviewSlide = async () => {
+    const opened = await open();
+    const review = SLIDES.findIndex(slide => slide.key === 'review');
+    for (let i = 0; i < review; i++) await press(opened.root, 'Next');
+    return opened;
+  };
+
   test('Review & Next in the practice queue saves the card and moves on', async () => {
-    const { root } = await open();
+    const { root } = await openReviewSlide();
     await press(root, 'Food');
     await press(root, 'Review & Next');
     // The fly-off animation finishes before the sample queue changes.
-    await act(async () => {
-      await new Promise<void>(resolve => setTimeout(resolve, 400));
-    });
+    await wait(400);
     expect(hasText(root, '1 of 2')).toBe(true);
+    expect(hasText(root, '✓ Saved AMAZON under Food. It left the queue, and the next card slid in.')).toBe(true);
+  });
+
+  test('a category tapped during the fly-off is ignored', async () => {
+    const { root } = await openReviewSlide();
+    await press(root, 'Review & Next');
+    await press(root, 'Transport');
+    expect(hasText(root, 'Transport picked. Now tap Review & Next to save it.')).toBe(false);
+    await wait(400);
+    expect(hasText(root, '✓ Saved AMAZON. It left the queue, and the next card slid in.')).toBe(true);
   });
 });
 
@@ -158,5 +196,23 @@ describe('first launch', () => {
     act(() => renderer?.unmount());
     const relaunched = await launch();
     expect(hasText(relaunched, 'Welcome to TxnTrace')).toBe(false);
+  });
+
+  test('skips the tutorial for someone upgrading with existing data', async () => {
+    mockHasData = true;
+    const root = await launch();
+    expect(hasText(root, 'Welcome to TxnTrace')).toBe(false);
+    expect(mockSettings.tutorial_seen_version).toBe('1');
+  });
+
+  test('Settings can replay the tutorial after it was seen', async () => {
+    mockSettings.tutorial_seen_version = '1';
+    const root = await launch();
+    expect(hasText(root, 'Welcome to TxnTrace')).toBe(false);
+
+    await press(root, 'Show App Tutorial');
+    expect(hasText(root, 'Welcome to TxnTrace')).toBe(true);
+    await press(root, 'Skip');
+    expect(hasText(root, 'Welcome to TxnTrace')).toBe(false);
   });
 });

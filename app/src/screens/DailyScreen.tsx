@@ -10,6 +10,7 @@ import BankIcon from '../components/BankIcon';
 import PasteSMSModal from '../components/PasteSMSModal';
 import ContactPickerModal, { PickedContact } from '../components/ContactPickerModal';
 import { useTheme } from '../theme/ThemeProvider';
+import { DOUBLE_TAP_DELAY } from '../constants/gestures';
 import { checkNewMessages } from '../services/smsIngest';
 import {
   autoMatchCreditTransaction,
@@ -92,7 +93,6 @@ const DailyScreen = () => {
     }
 
     const lastTap = lastTapRef.current[txn.id] || 0;
-    const DOUBLE_TAP_DELAY = 280;
 
     if (now - lastTap < DOUBLE_TAP_DELAY) {
       // Double tap detected: cancel single-tap timer and mark transaction as mine

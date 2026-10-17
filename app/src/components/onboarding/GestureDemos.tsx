@@ -1,8 +1,19 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Easing, PanResponder, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
+  PanResponder,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import Svg, { Polyline } from 'react-native-svg';
 import { useTheme } from '../../theme/ThemeProvider';
 import BankIcon from '../BankIcon';
+import { DOUBLE_TAP_DELAY, ROW_SWIPE_THRESHOLD } from '../../constants/gestures';
 
 /**
  * Practice versions of the app's real gestures for the first-run tutorial.
@@ -14,8 +25,6 @@ import BankIcon from '../BankIcon';
  * demo refuses to hand a drag over once it has started.
  */
 
-const DOUBLE_TAP_DELAY = 280; // same as DailyScreen
-const ROW_SWIPE_THRESHOLD = 40; // same as SwipeableRow
 // The real Review card uses 100; the practice card is narrower.
 const CARD_SWIPE_THRESHOLD = 80;
 
@@ -80,8 +89,11 @@ const useTimers = () => {
   }).current;
 };
 
-const timing = (value: Animated.Value, toValue: number, duration: number) =>
-  Animated.timing(value, { toValue, duration, easing: Easing.out(Easing.cubic), useNativeDriver: false });
+// The swipe demos stay on the JS driver: a drag takes over mid-hint by reading
+// the value back synchronously from stopAnimation, which a native-driven value
+// can only answer asynchronously. Animations nobody can grab pass `native`.
+const timing = (value: Animated.Value, toValue: number, duration: number, native = false) =>
+  Animated.timing(value, { toValue, duration, easing: Easing.out(Easing.cubic), useNativeDriver: native });
 
 const Caption = ({ text, success }: { text: string; success?: boolean }) => {
   const { colors } = useTheme();
@@ -118,6 +130,7 @@ const DAILY_CAPTIONS = {
   idle: 'Try it: swipe the top row to the right, or double-tap it.',
   swiped: '✓ Swiped right: marked as yours and cleared from the list.',
   double: '✓ Double-tapped: marked as yours. The fastest way through a long list.',
+  action: '✓ Marked as yours and cleared from the list.',
   tap: 'One tap opens the details: the original SMS, place and card rewards.',
   split: 'Split shares a spend with friends. They’ll owe you their part.',
   mine: 'Mine: money that’s yours, like a refund or your salary.',
@@ -161,13 +174,18 @@ export const SwipeRowDemo = ({ active }: { active: boolean }) => {
   }, [pan, finger]);
   const stopHint = useHintLoop(active && !tried && !reduceMotion, buildHint, resetHint);
 
-  const takeOver = () => {
+  const springBack = () => Animated.spring(pan, { toValue: 0, useNativeDriver: false }).start();
+
+  // Ends the hint for good. A drag (settle = false) picks up from wherever
+  // the hint left the row; a tap puts the row back first.
+  const takeOver = (settle = true) => {
     stopHint();
     finger.setValue(0);
     setTried(true);
+    if (settle && !busy.current) springBack();
   };
 
-  const markMine = (how: 'swiped' | 'double') => {
+  const markMine = (how: 'swiped' | 'double' | 'action') => {
     if (busy.current) return;
     busy.current = true;
     Animated.parallel([timing(pan, 400, 200), timing(rowOpacity, 0, 200)]).start(() => {
@@ -181,8 +199,6 @@ export const SwipeRowDemo = ({ active }: { active: boolean }) => {
       }, 900);
     });
   };
-
-  const springBack = () => Animated.spring(pan, { toValue: 0, useNativeDriver: false }).start();
 
   const handleRowTap = () => {
     if (busy.current) return;
@@ -214,7 +230,7 @@ export const SwipeRowDemo = ({ active }: { active: boolean }) => {
       onMoveShouldSetPanResponder: (_, g) => !busy.current && g.dx > 4 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
-        takeOver();
+        takeOver(false);
         pan.stopAnimation(value => {
           dragStart.current = value;
         });
@@ -228,7 +244,7 @@ export const SwipeRowDemo = ({ active }: { active: boolean }) => {
     })
   ).current;
 
-  const isSuccess = caption === 'swiped' || caption === 'double';
+  const isSuccess = caption === 'swiped' || caption === 'double' || caption === 'action';
 
   return (
     <View style={styles.demo}>
@@ -243,7 +259,16 @@ export const SwipeRowDemo = ({ active }: { active: boolean }) => {
               onPress={handleRowTap}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel="Sample spend: Swiggy, 349 rupees. Double-tap to mark it as yours."
+              accessibilityLabel="Sample spend: Swiggy, 349 rupees"
+              // With a screen reader on, a double-tap arrives as one press, so
+              // marking it as yours is offered as an action instead.
+              accessibilityHint="Opens the details. Use the Mark as mine action to mark it as yours."
+              accessibilityActions={[{ name: 'markMine', label: 'Mark as mine' }]}
+              onAccessibilityAction={e => {
+                if (e.nativeEvent.actionName !== 'markMine' || busy.current) return;
+                takeOver(false);
+                markMine('action');
+              }}
             >
               <BankIcon bank="HDFC Bank" size={30} />
               <View style={styles.rowMiddle}>
@@ -322,6 +347,8 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
   const { colors } = useTheme();
   const reduceMotion = useReduceMotion();
   const timers = useTimers();
+  // Far enough that the card is fully out of the slide before it's swapped.
+  const { width: exitDistance } = useWindowDimensions();
   const [queue, setQueue] = useState(SAMPLE_QUEUE);
   const [index, setIndex] = useState(0);
   const [category, setCategory] = useState<string | null>(null);
@@ -358,13 +385,24 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
   }, [pan, finger]);
   const stopHint = useHintLoop(active && !tried && !reduceMotion, buildHint, resetHint);
 
-  const takeOver = () => {
+  const springBack = () => Animated.spring(pan, { toValue: 0, useNativeDriver: false }).start();
+
+  // Ends the hint for good. A drag or the fly-off (settle = false) moves the
+  // card itself; a tap puts it back where the hint left it.
+  const takeOver = (settle = true) => {
     stopHint();
     finger.setValue(0);
     setTried(true);
+    if (settle && !animating.current) springBack();
   };
 
-  const springBack = () => Animated.spring(pan, { toValue: 0, useNativeDriver: false }).start();
+  // Taps wait out a fly-off, so the card that lands can't have its caption or
+  // category overwritten by one picked mid-animation.
+  const tap = (action: () => void) => () => {
+    if (animating.current) return;
+    takeOver();
+    action();
+  };
 
   // Same motion as ReviewScreen.browse: out one side, in from the other.
   const browse = (step: 1 | -1) => {
@@ -374,7 +412,7 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
       return;
     }
     animating.current = true;
-    const exitX = -step * 320;
+    const exitX = -step * exitDistance;
     setCaption({
       text: step === 1 ? 'Swiped left: the next card. Swiping only browses, nothing was saved.' : 'Swiped right: back to the previous card.',
       success: false,
@@ -391,9 +429,9 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
 
   const reviewAndNext = () => {
     if (animating.current || !card) return;
-    takeOver();
+    takeOver(false);
     animating.current = true;
-    timing(pan, 360, 200).start(() => {
+    timing(pan, exitDistance, 200).start(() => {
       const remaining = queue.filter(c => c.id !== card.id);
       setCaption({
         text: `✓ Saved ${card.merchant}${category ? ` under ${category}` : ''}. It left the queue, and the next card slid in.`,
@@ -425,7 +463,7 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
         !animating.current && Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
-        actionsRef.current.takeOver();
+        actionsRef.current.takeOver(false);
         pan.stopAnimation(value => {
           dragStart.current = value;
         });
@@ -460,10 +498,9 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
             <TouchableOpacity
               style={styles.cardInner}
               activeOpacity={0.9}
-              onPress={() => {
-                takeOver();
-                setCaption({ text: 'Tapping the card opens its full details, including the original SMS.', success: false });
-              }}
+              onPress={tap(() =>
+                setCaption({ text: 'Tapping the card opens its full details, including the original SMS.', success: false })
+              )}
               accessibilityRole="button"
               accessibilityLabel={`Sample card: ${card.merchant}, ${card.amount} rupees`}
             >
@@ -496,11 +533,10 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
                 styles.chip,
                 { backgroundColor: selected ? colors.primary : colors.surface, borderColor: selected ? colors.primary : colors.border },
               ]}
-              onPress={() => {
-                takeOver();
+              onPress={tap(() => {
                 setCategory(name);
                 setCaption({ text: `${name} picked. Now tap Review & Next to save it.`, success: false });
-              }}
+              })}
               accessibilityRole="button"
               accessibilityState={{ selected }}
             >
@@ -514,10 +550,9 @@ export const ReviewCardDemo = ({ active }: { active: boolean }) => {
         <TouchableOpacity
           style={[styles.bigButton, { backgroundColor: colors.warning }]}
           disabled={!card}
-          onPress={() => {
-            takeOver();
-            setCaption({ text: 'Split this lets you pick contacts. The amount is divided equally, and you can edit each share.', success: false });
-          }}
+          onPress={tap(() =>
+            setCaption({ text: 'Split this lets you pick contacts. The amount is divided equally, and you can edit each share.', success: false })
+          )}
           accessibilityRole="button"
         >
           <Text style={[styles.bigButtonText, { color: colors.onPrimary }]}>Split this (0)</Text>
@@ -552,12 +587,12 @@ export const SmsFlowDemo = ({ active }: { active: boolean }) => {
     () =>
       Animated.sequence([
         Animated.delay(1800),
-        Animated.parallel([timing(bubble, 0, 300), timing(arrow, 0, 300), timing(result, 0, 300)]),
+        Animated.parallel([timing(bubble, 0, 300, true), timing(arrow, 0, 300, true), timing(result, 0, 300, true)]),
         Animated.delay(250),
-        timing(bubble, 1, 400),
+        timing(bubble, 1, 400, true),
         Animated.delay(250),
-        timing(arrow, 1, 250),
-        timing(result, 1, 350),
+        timing(arrow, 1, 250, true),
+        timing(result, 1, 350, true),
       ]),
     [bubble, arrow, result]
   );

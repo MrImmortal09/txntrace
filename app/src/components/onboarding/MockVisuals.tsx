@@ -11,6 +11,11 @@ import { IconDaily, IconFriends, IconHome, IconMore, IconReview } from '../TabIc
  * sample numbers. Display only; the interactive ones are in GestureDemos.
  */
 
+// "A, B and C", built from BANKS so the caption matches the logos above it.
+const bankNames = BANKS.map(bank => bank.name);
+const BANK_LIST =
+  bankNames.length > 1 ? `${bankNames.slice(0, -1).join(', ')} and ${bankNames[bankNames.length - 1]}` : bankNames[0];
+
 export const WelcomeVisual = () => {
   const { colors } = useTheme();
   return (
@@ -30,9 +35,7 @@ export const WelcomeVisual = () => {
           </View>
         ))}
       </View>
-      <Text style={[styles.smallNote, { color: colors.textSecondary }]}>
-        Reads SMS from HDFC, ICICI, SBI, Axis, IndusInd, Yes Bank and IDFC First
-      </Text>
+      <Text style={[styles.smallNote, { color: colors.textSecondary }]}>Reads SMS from {BANK_LIST}</Text>
     </View>
   );
 };

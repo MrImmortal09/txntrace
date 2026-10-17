@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Modal,
@@ -74,18 +74,22 @@ const SlidePage = ({ slide, active, width }: { slide: Slide; active: boolean; wi
   );
 };
 
-/**
- * First-run walkthrough of every tab, with practice versions of the Daily and
- * Review swipes. Slides change by swiping anywhere outside a demo, or with
- * Back / Next.
- */
-const OnboardingTutorial = ({ visible, onDone }: Props) => {
+interface TourProps extends Props {
+  /** Android back, routed here from the Modal that wraps the tour. */
+  backRef: React.MutableRefObject<() => void>;
+}
+
+const Tour = ({ visible, onDone, backRef }: TourProps) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(0);
+  // Slides mount as the tour gets near them rather than all at once on
+  // launch, and stay mounted after so a demo keeps its progress.
+  const [reach, setReach] = useState(1);
   const indexRef = useRef(0);
   const widthRef = useRef(width);
+  const dragStart = useRef(0);
   // Measured in slides, not pixels, so a width change can't strand the pager
   // between two of them.
   const position = useRef(new Animated.Value(0)).current;
@@ -94,30 +98,31 @@ const OnboardingTutorial = ({ visible, onDone }: Props) => {
     widthRef.current = width;
   }, [width]);
 
-  // Every opening starts from the first slide.
-  useEffect(() => {
-    if (visible) {
-      indexRef.current = 0;
-      setIndex(0);
-      position.setValue(0);
-    }
-  }, [visible, position]);
-
   const goTo = (target: number) => {
     const next = Math.max(0, Math.min(LAST, target));
     indexRef.current = next;
     setIndex(next);
+    setReach(r => Math.max(r, next + 1));
     Animated.spring(position, { toValue: next, speed: 16, bounciness: 0, useNativeDriver: false }).start();
   };
 
-  // goTo only touches refs, the setter and the Animated value, so this
+  useEffect(() => {
+    backRef.current = () => (indexRef.current === 0 ? onDone() : goTo(indexRef.current - 1));
+  });
+
+  // goTo only touches refs, setters and the Animated value, so this
   // once-created responder can keep the first render's copy.
   const pager = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
-      onPanResponderGrant: () => position.stopAnimation(),
+      // Caught mid-spring, the strip follows the finger from where it is, not
+      // from the slide it was heading to.
+      onPanResponderGrant: () =>
+        position.stopAnimation(value => {
+          dragStart.current = value;
+        }),
       onPanResponderMove: (_, g) => {
-        const raw = indexRef.current - g.dx / widthRef.current;
+        const raw = dragStart.current - g.dx / widthRef.current;
         // Drags past the first or last slide stretch, then spring back.
         position.setValue(raw < 0 ? raw / 3 : raw > LAST ? LAST + (raw - LAST) / 3 : raw);
       },
@@ -133,89 +138,107 @@ const OnboardingTutorial = ({ visible, onDone }: Props) => {
 
   const isFirst = index === 0;
   const isLast = index === LAST;
-  const translateX = Animated.multiply(position, -width);
+  const translateX = useMemo(() => Animated.multiply(position, -width), [position, width]);
+  const dotStyles = useMemo(
+    () =>
+      SLIDES.map((_, i) => {
+        const range = { inputRange: [i - 1, i, i + 1], extrapolate: 'clamp' as const };
+        return {
+          width: position.interpolate({ ...range, outputRange: [8, 22, 8] }),
+          opacity: position.interpolate({ ...range, outputRange: [0.3, 1, 0.3] }),
+        };
+      }),
+    [position]
+  );
 
+  return (
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: Math.max(insets.bottom, 12) },
+      ]}
+    >
+      <View style={styles.header}>
+        <Text style={[styles.step, { color: colors.textSecondary }]}>
+          {index + 1} of {SLIDES.length}
+        </Text>
+        <TouchableOpacity
+          onPress={onDone}
+          disabled={isLast}
+          style={isLast && styles.hidden}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Skip tutorial"
+          accessibilityElementsHidden={isLast}
+          importantForAccessibility={isLast ? 'no-hide-descendants' : 'auto'}
+        >
+          <Text style={[styles.skip, { color: colors.primary }]}>Skip</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.pager} {...pager.panHandlers}>
+        <Animated.View style={[styles.strip, { width: width * SLIDES.length, transform: [{ translateX }] }]}>
+          {SLIDES.map((slide, i) =>
+            i <= reach ? (
+              <SlidePage key={slide.key} slide={slide} active={visible && i === index} width={width} />
+            ) : (
+              <View key={slide.key} style={{ width }} />
+            )
+          )}
+        </Animated.View>
+      </View>
+
+      <View style={styles.footer}>
+        <View style={styles.dots}>
+          {SLIDES.map((slide, i) => (
+            <Animated.View key={slide.key} style={[styles.dot, { backgroundColor: colors.primary }, dotStyles[i]]} />
+          ))}
+        </View>
+
+        <View style={styles.navRow}>
+          <TouchableOpacity
+            style={[styles.navButton, { borderColor: colors.border }, isFirst && styles.hidden]}
+            onPress={() => goTo(index - 1)}
+            disabled={isFirst}
+            accessibilityRole="button"
+            accessibilityElementsHidden={isFirst}
+            importantForAccessibility={isFirst ? 'no-hide-descendants' : 'auto'}
+          >
+            <Text style={[styles.navButtonText, { color: colors.text }]}>Back</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.navButton, styles.primaryButton, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+            onPress={() => (isLast ? onDone() : goTo(index + 1))}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.navButtonText, { color: colors.onPrimary }]}>{isLast ? 'Get started' : 'Next'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+};
+
+/**
+ * First-run walkthrough of every tab, with practice versions of the Daily and
+ * Review swipes. Slides change by swiping anywhere outside a demo, or with
+ * Back / Next.
+ *
+ * The Modal unmounts its children once hidden, so keeping the tour's state in
+ * Tour means every opening starts on the first slide, and a closed tutorial
+ * costs nothing on re-render.
+ */
+const OnboardingTutorial = ({ visible, onDone }: Props) => {
+  const backRef = useRef(onDone);
   return (
     <Modal
       visible={visible}
       animationType="fade"
-      onRequestClose={() => (isFirst ? onDone() : goTo(index - 1))}
+      onRequestClose={() => backRef.current()}
       statusBarTranslucent
       navigationBarTranslucent
     >
-      <View
-        style={[
-          styles.container,
-          { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: Math.max(insets.bottom, 12) },
-        ]}
-      >
-        <View style={styles.header}>
-          <Text style={[styles.step, { color: colors.textSecondary }]}>
-            {index + 1} of {SLIDES.length}
-          </Text>
-          <TouchableOpacity
-            onPress={onDone}
-            disabled={isLast}
-            style={isLast && styles.hidden}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityRole="button"
-            accessibilityLabel="Skip tutorial"
-            accessibilityElementsHidden={isLast}
-            importantForAccessibility={isLast ? 'no-hide-descendants' : 'auto'}
-          >
-            <Text style={[styles.skip, { color: colors.primary }]}>Skip</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.pager} {...pager.panHandlers}>
-          <Animated.View style={[styles.strip, { width: width * SLIDES.length, transform: [{ translateX }] }]}>
-            {SLIDES.map((slide, i) => (
-              <SlidePage key={slide.key} slide={slide} active={visible && i === index} width={width} />
-            ))}
-          </Animated.View>
-        </View>
-
-        <View style={styles.footer}>
-          <View style={styles.dots}>
-            {SLIDES.map((slide, i) => {
-              const range = { inputRange: [i - 1, i, i + 1], extrapolate: 'clamp' as const };
-              return (
-                <Animated.View
-                  key={slide.key}
-                  style={[
-                    styles.dot,
-                    {
-                      backgroundColor: colors.primary,
-                      width: position.interpolate({ ...range, outputRange: [8, 22, 8] }),
-                      opacity: position.interpolate({ ...range, outputRange: [0.3, 1, 0.3] }),
-                    },
-                  ]}
-                />
-              );
-            })}
-          </View>
-
-          <View style={styles.navRow}>
-            <TouchableOpacity
-              style={[styles.navButton, { borderColor: colors.border }, isFirst && styles.hidden]}
-              onPress={() => goTo(index - 1)}
-              disabled={isFirst}
-              accessibilityRole="button"
-              accessibilityElementsHidden={isFirst}
-              importantForAccessibility={isFirst ? 'no-hide-descendants' : 'auto'}
-            >
-              <Text style={[styles.navButtonText, { color: colors.text }]}>Back</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.navButton, styles.primaryButton, { backgroundColor: colors.primary, borderColor: colors.primary }]}
-              onPress={() => (isLast ? onDone() : goTo(index + 1))}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.navButtonText, { color: colors.onPrimary }]}>{isLast ? 'Get started' : 'Next'}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+      <Tour visible={visible} onDone={onDone} backRef={backRef} />
     </Modal>
   );
 };
