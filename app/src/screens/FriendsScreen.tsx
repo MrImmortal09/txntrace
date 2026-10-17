@@ -10,6 +10,7 @@ import {
 } from '../services/settlements';
 import ContactPickerModal, { PickedContact } from '../components/ContactPickerModal';
 import AddExpenseModal from '../components/AddExpenseModal';
+import { useTheme } from '../theme/ThemeProvider';
 
 interface PendingMatch {
   id: string;
@@ -29,6 +30,7 @@ interface FriendBalance {
 const FriendsScreen = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [pending, setPending] = useState<PendingMatch[]>([]);
   const [friends, setFriends] = useState<FriendBalance[]>([]);
   const [matchingTxn, setMatchingTxn] = useState<PendingMatch | null>(null);
@@ -124,30 +126,41 @@ const FriendsScreen = () => {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.titleRow, { paddingTop: Math.max(insets.top + 16, 16) }]}>
-        <Text style={styles.title}>Friends</Text>
-        <TouchableOpacity style={styles.addButton} onPress={() => setAddingExpense(true)}>
-          <Text style={styles.addButtonText}>+</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Friends</Text>
+        <TouchableOpacity
+          style={[styles.addButton, { backgroundColor: colors.primary }]}
+          onPress={() => setAddingExpense(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Add an expense with a friend"
+        >
+          <Text style={[styles.addButtonText, { color: colors.onPrimary }]}>+</Text>
         </TouchableOpacity>
       </View>
 
       {pending.length > 0 && (
-        <View style={styles.pendingSection}>
-          <Text style={styles.sectionHeader}>Needs matching</Text>
+        <View style={[styles.pendingSection, { backgroundColor: colors.warning + '1A', borderColor: colors.warning + '55' }]}>
+          <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>Needs matching</Text>
           {pending.map(item => (
             <View key={item.id} style={styles.pendingRow}>
               <View style={styles.pendingInfo}>
-                <Text style={styles.pendingName}>{item.merchant_raw || 'Unknown Payer'}</Text>
-                <Text style={styles.pendingMeta}>{new Date(item.date).toLocaleDateString()}</Text>
+                <Text style={[styles.pendingName, { color: colors.text }]}>{item.merchant_raw || 'Unknown Payer'}</Text>
+                <Text style={[styles.pendingMeta, { color: colors.textSecondary }]}>{new Date(item.date).toLocaleDateString()}</Text>
               </View>
-              <Text style={styles.pendingAmount}>+₹{item.amount.toFixed(2)}</Text>
+              <Text style={[styles.pendingAmount, { color: colors.success }]}>+₹{item.amount.toFixed(2)}</Text>
               <View style={styles.pendingActions}>
-                <TouchableOpacity style={styles.mineButton} onPress={() => handleMarkAsMine(item)}>
-                  <Text style={styles.mineButtonText}>Mine</Text>
+                <TouchableOpacity
+                  style={[styles.mineButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                  onPress={() => handleMarkAsMine(item)}
+                >
+                  <Text style={[styles.mineButtonText, { color: colors.textSecondary }]}>Mine</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.matchButtonTouch} onPress={() => handleMatch(item)}>
-                  <Text style={styles.matchButton}>Match</Text>
+                <TouchableOpacity
+                  style={[styles.matchButtonTouch, { backgroundColor: colors.primary }]}
+                  onPress={() => handleMatch(item)}
+                >
+                  <Text style={[styles.matchButton, { color: colors.onPrimary }]}>Match</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -157,7 +170,9 @@ const FriendsScreen = () => {
 
       {friends.length === 0 ? (
         <View style={styles.center}>
-          <Text style={styles.emptyText}>No friends yet — split a transaction to get started.</Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            No friends yet — split a transaction to get started.
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -166,7 +181,7 @@ const FriendsScreen = () => {
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.friendRow}
+              style={[styles.friendRow, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}
               onPress={() =>
                 navigation.navigate('FriendDetail', {
                   contactId: item.contact_id,
@@ -174,13 +189,15 @@ const FriendsScreen = () => {
                 })
               }
             >
-              <Text style={styles.friendName}>{item.contact_name}</Text>
+              <Text style={[styles.friendName, { color: colors.text }]}>{item.contact_name}</Text>
               {item.net_balance > 0 ? (
-                <Text style={styles.owedAmount}>owes ₹{item.net_balance.toFixed(2)}</Text>
+                <Text style={[styles.owedAmount, { color: colors.warning }]}>owes ₹{item.net_balance.toFixed(2)}</Text>
               ) : item.net_balance < 0 ? (
-                <Text style={styles.youOweAmount}>you owe ₹{Math.abs(item.net_balance).toFixed(2)}</Text>
+                <Text style={[styles.youOweAmount, { color: colors.danger }]}>
+                  you owe ₹{Math.abs(item.net_balance).toFixed(2)}
+                </Text>
               ) : (
-                <Text style={styles.settledText}>settled up</Text>
+                <Text style={[styles.settledText, { color: colors.success }]}>settled up</Text>
               )}
             </TouchableOpacity>
           )}
@@ -216,7 +233,7 @@ const FriendsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1 },
   titleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -224,56 +241,55 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#333' },
+  title: { fontSize: 24, fontWeight: 'bold' },
   addButton: {
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#007AFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addButtonText: { color: '#fff', fontSize: 20, fontWeight: '600', lineHeight: 22 },
-  sectionHeader: { fontSize: 13, fontWeight: '700', color: '#999', textTransform: 'uppercase', marginBottom: 8 },
-  pendingSection: { backgroundColor: '#fff8e1', marginHorizontal: 16, marginBottom: 8, padding: 14, borderRadius: 10 },
+  addButtonText: { fontSize: 20, fontWeight: '600', lineHeight: 22 },
+  sectionHeader: { fontSize: 13, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 },
+  pendingSection: { marginHorizontal: 16, marginBottom: 8, padding: 14, borderRadius: 10, borderWidth: 1 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
   pendingInfo: { flex: 1 },
-  pendingName: { fontSize: 15, fontWeight: '600', color: '#333' },
-  pendingMeta: { fontSize: 12, color: '#999', marginTop: 2 },
-  pendingAmount: { fontSize: 15, fontWeight: 'bold', color: '#34C759', marginRight: 10 },
+  pendingName: { fontSize: 15, fontWeight: '600' },
+  pendingMeta: { fontSize: 12, marginTop: 2 },
+  pendingAmount: { fontSize: 15, fontWeight: 'bold', marginRight: 10 },
   pendingActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   mineButton: {
     paddingVertical: 5,
     paddingHorizontal: 10,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#ccc',
-    backgroundColor: '#fff',
   },
-  mineButtonText: { fontSize: 13, fontWeight: '600', color: '#666' },
+  mineButtonText: { fontSize: 13, fontWeight: '600' },
   matchButtonTouch: {
     paddingVertical: 5,
     paddingHorizontal: 10,
     borderRadius: 6,
-    backgroundColor: '#007AFF',
   },
-  matchButton: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  matchButton: { fontSize: 13, fontWeight: '700' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
-  emptyText: { color: '#999', fontSize: 15, textAlign: 'center' },
+  emptyText: { fontSize: 15, textAlign: 'center' },
   listContent: { padding: 16, paddingTop: 8 },
   friendRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#fff',
     borderRadius: 10,
     padding: 16,
     marginBottom: 10,
+    elevation: 2,
+    shadowOpacity: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 8,
   },
-  friendName: { fontSize: 16, fontWeight: '600', color: '#333' },
-  owedAmount: { fontSize: 15, fontWeight: 'bold', color: '#FF9500' },
-  youOweAmount: { fontSize: 15, fontWeight: 'bold', color: '#FF3B30' },
-  settledText: { fontSize: 14, color: '#34C759', fontWeight: '600' },
+  friendName: { fontSize: 16, fontWeight: '600' },
+  owedAmount: { fontSize: 15, fontWeight: 'bold' },
+  youOweAmount: { fontSize: 15, fontWeight: 'bold' },
+  settledText: { fontSize: 14, fontWeight: '600' },
 });
 
 export default FriendsScreen;

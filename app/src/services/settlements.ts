@@ -1,4 +1,7 @@
+import Contacts from 'react-native-contacts';
 import { db } from '../db/schema';
+import { contactName as deviceContactName } from './deviceContacts';
+import { hasContactsAccess } from './permissions';
 
 /**
  * Collapses a payer name down to a stable matching key.
@@ -132,6 +135,22 @@ export const applySettlement = async (
   ]);
 
   return { matchedSplitId: firstMatchedId, unappliedAmount: unapplied };
+};
+
+/**
+ * When each contact was last split with (the latest transaction date), keyed
+ * by contact id, so split pickers can put people you split with often first.
+ */
+export const loadSplitRecency = async (): Promise<Record<string, string>> => {
+  const res = await db.execute(
+    `SELECT s.contact_id as contactId, MAX(t.date) as lastUsed
+     FROM splits s JOIN transactions t ON t.id = s.transaction_id
+     GROUP BY s.contact_id`
+  );
+  const rows: any = res.rows;
+  const recency: Record<string, string> = {};
+  for (const r of rows?._array || rows || []) recency[r.contactId] = r.lastUsed;
+  return recency;
 };
 
 /**
@@ -290,35 +309,30 @@ export const autoMatchCreditTransaction = async (
     }
   }
 
-  // 3. Check device contacts
+  // 3. Check device contacts. Only checks access, never asks: when this finds
+  // nothing, the caller opens the contact picker, which asks if needed.
   try {
-    const Contacts = require('react-native-contacts');
-    const ContactsModule = Contacts.default || Contacts;
-    const perm = await ContactsModule.checkPermission();
-    if (perm === 'authorized' && rawName) {
-      const allContacts = await ContactsModule.getAll();
+    if (rawName && (await hasContactsAccess())) {
+      const allContacts = await Contacts.getAll();
       const normRaw = normalizeName(rawName);
-      const matched = allContacts.find((c: any) => {
-        const name = c.displayName || `${c.givenName || ''} ${c.familyName || ''}`.trim();
-        return normalizeName(name) === normRaw;
-      });
+      const matched = allContacts.find(c => normalizeName(deviceContactName(c)) === normRaw);
       if (matched) {
-        const contactName = matched.displayName || `${matched.givenName || ''} ${matched.familyName || ''}`.trim();
+        const name = deviceContactName(matched);
         await db.execute(
           `INSERT OR REPLACE INTO contact_aliases (id, normalized_name, raw_name, contact_id, contact_name, created_at)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          [normRaw, normRaw, rawName, matched.recordID, contactName, new Date().toISOString()]
+          [normRaw, normRaw, rawName, matched.recordID, name, new Date().toISOString()]
         );
-        const { unappliedAmount } = await applySettlement(matched.recordID, contactName, txn.amount, txn.id);
+        const { unappliedAmount } = await applySettlement(matched.recordID, name, txn.amount, txn.id);
         return {
           matched: true,
           contactId: matched.recordID,
-          contactName,
+          contactName: name,
           unappliedAmount,
         };
       }
     }
-  } catch (err) {
+  } catch {
     // Ignore contacts read error if module unavailable or permission not granted
   }
 

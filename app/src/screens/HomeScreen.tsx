@@ -17,6 +17,7 @@ import { db } from '../db/schema';
 import { useTheme } from '../theme/ThemeProvider';
 import BankIcon from '../components/BankIcon';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
+import SmsAccessBanner from '../components/SmsAccessBanner';
 import { checkNewMessages } from '../services/smsIngest';
 
 const CHART_HEIGHT = 140;
@@ -429,7 +430,9 @@ const HomeScreen = () => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    // No bottom edge: the tab bar below already pads for the home indicator,
+    // so padding here too left a fixed empty strip above it.
+    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
@@ -437,6 +440,8 @@ const HomeScreen = () => {
         <View style={styles.headerBar}>
           <Text style={[styles.header, { color: colors.text }]}>Dashboard</Text>
         </View>
+
+        <SmsAccessBanner style={styles.smsBanner} />
 
         {/* Date Navigation & Range Control */}
         <View style={[styles.dateNavCard, { backgroundColor: colors.surface, shadowColor: colors.cardShadow, borderColor: colors.border }]}>
@@ -781,7 +786,16 @@ const HomeScreen = () => {
       </Modal>
 
       {/* Transaction Detail Modal - Shows full info on click */}
-      <TransactionDetailModal transaction={selectedTxn} onClose={() => setSelectedTxn(null)} />
+      <TransactionDetailModal
+        transaction={selectedTxn}
+        onClose={() => setSelectedTxn(null)}
+        onEdited={updated => {
+          setSelectedTxn(updated);
+          // Only category and note change, so patch the one row in place;
+          // the chart and grouping recompute from it.
+          setAllMineSpends(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+        }}
+      />
     </SafeAreaView>
   );
 };
@@ -791,6 +805,7 @@ const styles = StyleSheet.create({
   scrollContent: { padding: 16, paddingBottom: 40 },
   headerBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   header: { fontSize: 28, fontWeight: '700' },
+  smsBanner: { marginHorizontal: 0, marginTop: 0, marginBottom: 16 },
 
   // Date Nav Card
   dateNavCard: {

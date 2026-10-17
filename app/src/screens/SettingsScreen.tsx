@@ -18,10 +18,13 @@ import {
   getAuthToken,
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
+import { hasContactsAccess } from '../services/permissions';
 import { checkForAppUpdate, useUpdateStatus } from '../services/playStoreUpdate';
 import { useTheme } from '../theme/ThemeProvider';
 import { OTPLoginModal } from '../components/OTPLoginModal';
 import { useShowTutorial } from '../components/onboarding/TutorialContext';
+import { useResetApp } from '../components/AppResetContext';
+import { APP_NAME, APP_NAME_FULL } from '../constants/appName';
 
 // Subscribes on its own so download progress doesn't re-render the whole screen
 const UpdateStatusHint = () => {
@@ -48,6 +51,7 @@ const SettingsScreen = () => {
   const [pendingAction, setPendingAction] = useState<'sync' | 'backup' | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const showTutorial = useShowTutorial();
+  const resetApp = useResetApp();
 
   useEffect(() => {
     // No need to load serverUrl anymore
@@ -148,12 +152,12 @@ const SettingsScreen = () => {
       const { count } = await syncCardsFromServer();
 
       // Contacts only push one way (phone -> server), and only if contacts
-      // permission is actually granted — the web side just won't have a
-      // contact list to split against until it is, everything else still syncs.
+      // permission is already granted (a split asks for it) — sync never
+      // prompts. The web side just won't have a contact list to split
+      // against until then; everything else still syncs.
       let contactsMsg = '';
       try {
-        const permission = await Contacts.requestPermission();
-        if (permission === 'authorized') {
+        if (await hasContactsAccess()) {
           const all = await Contacts.getAll();
           const payload = all.map(c => ({
             id: c.recordID,
@@ -210,8 +214,7 @@ const SettingsScreen = () => {
     try {
       let contactsPayload: { id: string; name: string }[] = [];
       try {
-        const permission = await Contacts.requestPermission();
-        if (permission === 'authorized') {
+        if (await hasContactsAccess()) {
           const all = await Contacts.getAll();
           contactsPayload = all.map(c => ({
             id: c.recordID,
@@ -287,13 +290,30 @@ const SettingsScreen = () => {
     }
   };
 
-  const clearDb = async () => {
-    try {
-      await db.execute('DELETE FROM transactions');
-      log('DB cleared ✅');
-    } catch (e: any) {
-      log(`Clear DB FAILED: ${e.message}`);
-    }
+  const confirmResetApp = () => {
+    Alert.alert(
+      'Reset app?',
+      'All your data and transactions on this phone will be deleted: every transaction, friend split and balance, ' +
+        'card with its dues and rewards, the SMS log, and your settings. You’ll be signed out of web sync, and the ' +
+        `app starts over as if ${APP_NAME} was just installed.\n\n` +
+        'Backups already on the server stay there. This can’t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          // On success the app starts over and this screen goes with it.
+          onPress: async () => {
+            try {
+              await resetApp();
+            } catch (e: any) {
+              log(`Reset FAILED: ${e.message}`);
+              Alert.alert('Reset failed', e.message || 'Nothing was deleted.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const runReparse = async () => {
@@ -365,9 +385,9 @@ const SettingsScreen = () => {
         <>
           <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>1. Shortcuts automation</Text>
-            <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way TxnTrace sees your bank SMS</Text>
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way {APP_NAME} sees your bank SMS</Text>
             <Text style={[styles.description, { color: colors.textSecondary }]}>
-              iOS has no API for reading messages directly, so you hand them to TxnTrace with a
+              iOS has no API for reading messages directly, so you hand them to {APP_NAME_FULL} with a
               one-time automation. It runs in the background — nothing opens, nothing
               is sent anywhere.
             </Text>
@@ -518,8 +538,11 @@ const SettingsScreen = () => {
             {reparsing ? 'Re-parsing…' : 'Re-parse Stored Messages'}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.button, { backgroundColor: colors.danger }]} onPress={clearDb}>
-          <Text style={styles.buttonText}>Clear DB (for testing)</Text>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, { borderColor: colors.danger }]}
+          onPress={confirmResetApp}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.danger }]}>Reset App</Text>
         </TouchableOpacity>
 
         {debugLog.length > 0 && (

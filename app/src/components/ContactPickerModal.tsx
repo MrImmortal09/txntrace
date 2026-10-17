@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, Alert, SafeAreaView, TextInput } from 'react-native';
-import Contacts from 'react-native-contacts';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, SafeAreaView, TextInput } from 'react-native';
+import { contactName, useDeviceContacts } from '../services/deviceContacts';
+import { useTheme } from '../theme/ThemeProvider';
+import ContactListEmpty from './ContactListEmpty';
 
 export interface PickedContact {
   id: string;
@@ -15,44 +17,28 @@ interface Props {
 }
 
 const ContactPickerModal = ({ visible, title, onCancel, onSelect }: Props) => {
-  const [contacts, setContacts] = useState<any[]>([]);
+  const { colors } = useTheme();
+  const { contacts, allowed, retry } = useDeviceContacts(visible);
   const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    if (visible) loadContacts();
-  }, [visible]);
-
-  const loadContacts = async () => {
-    try {
-      const permission = await Contacts.requestPermission();
-      if (permission === 'authorized') {
-        setContacts(await Contacts.getAll());
-      } else {
-        Alert.alert('Permission Denied', 'Please allow contacts access in Settings.');
-      }
-    } catch (error) {
-      console.error('Failed to load contacts:', error);
-    }
-  };
-
-  const nameOf = (c: any) => c.displayName || `${c.givenName} ${c.familyName}`.trim();
   const filtered = query
-    ? contacts.filter(c => nameOf(c).toLowerCase().includes(query.toLowerCase()))
+    ? contacts.filter(c => contactName(c).toLowerCase().includes(query.toLowerCase()))
     : contacts;
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>{title}</Text>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onCancel}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.surface }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
           <TouchableOpacity onPress={onCancel}>
-            <Text style={styles.cancelText}>Cancel</Text>
+            <Text style={[styles.cancelText, { color: colors.primary }]}>Cancel</Text>
           </TouchableOpacity>
         </View>
 
         <TextInput
-          style={styles.search}
+          style={[styles.search, { backgroundColor: colors.background, color: colors.text }]}
           placeholder="Search contacts"
+          placeholderTextColor={colors.textSecondary}
           value={query}
           onChangeText={setQuery}
         />
@@ -62,13 +48,13 @@ const ContactPickerModal = ({ visible, title, onCancel, onSelect }: Props) => {
           keyExtractor={item => item.recordID}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.row}
-              onPress={() => onSelect({ id: item.recordID, name: nameOf(item) })}
+              style={[styles.row, { borderBottomColor: colors.border }]}
+              onPress={() => onSelect({ id: item.recordID, name: contactName(item) })}
             >
-              <Text style={styles.rowText}>{nameOf(item)}</Text>
+              <Text style={[styles.rowText, { color: colors.text }]}>{contactName(item)}</Text>
             </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text style={styles.emptyText}>No contacts found.</Text>}
+          ListEmptyComponent={<ContactListEmpty allowed={allowed} onAllow={retry} />}
         />
       </SafeAreaView>
     </Modal>
@@ -76,14 +62,13 @@ const ContactPickerModal = ({ visible, title, onCancel, onSelect }: Props) => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#eee' },
-  title: { fontSize: 18, fontWeight: 'bold' },
-  cancelText: { fontSize: 16, color: '#007AFF' },
-  search: { margin: 16, backgroundColor: '#f2f2f2', borderRadius: 10, padding: 12, fontSize: 15 },
-  row: { paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: '#f2f2f2' },
-  rowText: { fontSize: 16, color: '#333' },
-  emptyText: { textAlign: 'center', color: '#999', marginTop: 40 },
+  container: { flex: 1 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1 },
+  title: { flex: 1, fontSize: 18, fontWeight: 'bold', marginRight: 12 },
+  cancelText: { fontSize: 16 },
+  search: { margin: 16, borderRadius: 10, padding: 12, fontSize: 15 },
+  row: { paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1 },
+  rowText: { fontSize: 16 },
 });
 
 export default ContactPickerModal;

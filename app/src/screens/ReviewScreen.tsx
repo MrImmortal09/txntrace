@@ -1,14 +1,17 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView, ScrollView, Animated, PanResponder, AppState } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import Contacts from 'react-native-contacts';
+import { Contact } from 'react-native-contacts';
 import { db } from '../db/schema';
 import {
   createSplit,
   autoMatchCreditTransaction,
   matchCreditToContact,
+  loadSplitRecency,
 } from '../services/settlements';
 import { checkNewMessages } from '../services/smsIngest';
+import { contactName, sortByRecentSplit, useDeviceContacts } from '../services/deviceContacts';
+import { Category, loadCategories } from '../services/transactionEdits';
 import {
   CardRewardContext,
   loadCardRewardContext,
@@ -19,15 +22,11 @@ import { formatShortRate, formatUnits } from '../services/rewards/engine';
 import { openLocationInGoogleMaps } from '../utils/maps';
 import { useTheme } from '../theme/ThemeProvider';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
+import ContactListEmpty from '../components/ContactListEmpty';
 
 const SWIPE_THRESHOLD = 100;
 
 type Transaction = TransactionRow;
-
-interface Category {
-  id: string;
-  name: string;
-}
 
 interface SplitContact {
   id: string;
@@ -61,7 +60,7 @@ const ReviewScreen = () => {
   
   // Split state
   const [splitModalVisible, setSplitModalVisible] = useState(false);
-  const [contacts, setContacts] = useState<any[]>([]);
+  const { contacts, allowed: contactsAllowed, retry: retryContacts } = useDeviceContacts(splitModalVisible);
   const [contactQuery, setContactQuery] = useState('');
   const [contactRecency, setContactRecency] = useState<Record<string, string>>({});
   const [selectedContacts, setSelectedContacts] = useState<SplitContact[]>([]);
@@ -131,9 +130,7 @@ const ReviewScreen = () => {
 
   const loadData = useCallback(async () => {
     try {
-      const catRes = await db.execute('SELECT * FROM categories');
-      const catRows: any = catRes.rows;
-      setCategories(catRows?._array || catRows || []);
+      setCategories(await loadCategories());
 
       const txnRes = await db.execute('SELECT * FROM transactions WHERE reviewed = 0 ORDER BY date DESC');
       const txnRows: any = txnRes.rows;
@@ -282,48 +279,20 @@ const ReviewScreen = () => {
     })
   ).current;
 
+  // The sheet asks for contacts access itself, and offers to again if refused.
   const openSplitModal = async () => {
+    setSplitModalVisible(true);
     try {
-      const permission = await Contacts.requestPermission();
-      if (permission === 'authorized') {
-        const fetchedContacts = await Contacts.getAll();
-        setContacts(fetchedContacts);
-        setSplitModalVisible(true);
-
-        // Ranks contacts by the most recent transaction they were split on,
-        // so whoever you split with often doesn't get buried in an
-        // alphabetical phone-wide contact list.
-        const res = await db.execute(
-          `SELECT s.contact_id as contactId, MAX(t.date) as lastUsed
-           FROM splits s JOIN transactions t ON t.id = s.transaction_id
-           GROUP BY s.contact_id`
-        );
-        const rows: any = res.rows;
-        const arr = rows?._array || rows || [];
-        const map: Record<string, string> = {};
-        for (const r of arr) map[r.contactId] = r.lastUsed;
-        setContactRecency(map);
-      } else {
-        Alert.alert('Permission Denied', 'Please allow contacts access in settings.');
-      }
+      setContactRecency(await loadSplitRecency());
     } catch (error) {
-      console.error(error);
+      console.error('Failed to load contact recency:', error);
     }
   };
 
-  const nameOfContact = (c: any) => c.displayName || `${c.givenName} ${c.familyName}`.trim();
-
-  const sortedContacts = [...contacts].sort((a, b) => {
-    const aUsed = contactRecency[a.recordID];
-    const bUsed = contactRecency[b.recordID];
-    if (aUsed && bUsed) return bUsed.localeCompare(aUsed);
-    if (aUsed) return -1;
-    if (bUsed) return 1;
-    return nameOfContact(a).localeCompare(nameOfContact(b));
-  });
+  const sortedContacts = sortByRecentSplit(contacts, contactRecency);
 
   const filteredContacts = contactQuery
-    ? sortedContacts.filter(c => nameOfContact(c).toLowerCase().includes(contactQuery.toLowerCase()))
+    ? sortedContacts.filter(c => contactName(c).toLowerCase().includes(contactQuery.toLowerCase()))
     : sortedContacts;
 
   const handleMarkCreditForFriend = async () => {
@@ -342,9 +311,9 @@ const ReviewScreen = () => {
     openSplitModal();
   };
 
-  const toggleContactSelection = async (contact: any) => {
+  const toggleContactSelection = async (contact: Contact) => {
     if (currentTxn && currentTxn.type === 'credit') {
-      const name = nameOfContact(contact);
+      const name = contactName(contact);
       try {
         await matchCreditToContact(
           currentTxn.id,
@@ -366,8 +335,7 @@ const ReviewScreen = () => {
     if (exists) {
       newSelection = selectedContacts.filter(c => c.id !== contact.recordID);
     } else {
-      const name = contact.displayName || `${contact.givenName} ${contact.familyName}`.trim();
-      newSelection = [...selectedContacts, { id: contact.recordID, name, amountOwed: 0 }];
+      newSelection = [...selectedContacts, { id: contact.recordID, name: contactName(contact), amountOwed: 0 }];
     }
     
     // Auto equal split — divided only among selected contacts, not assuming
@@ -603,7 +571,7 @@ const ReviewScreen = () => {
             renderItem={({ item }) => {
               const isSelected = selectedContacts.some(c => c.id === item.recordID);
               const splitContact = selectedContacts.find(c => c.id === item.recordID);
-              const name = nameOfContact(item);
+              const name = contactName(item);
               const usedRecently = !!contactRecency[item.recordID];
 
               return (
@@ -643,6 +611,7 @@ const ReviewScreen = () => {
                 </View>
               );
             }}
+            ListEmptyComponent={<ContactListEmpty allowed={contactsAllowed} onAllow={retryContacts} />}
           />
         </SafeAreaView>
       </Modal>

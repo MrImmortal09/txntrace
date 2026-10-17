@@ -1,4 +1,5 @@
 import React from 'react';
+import Contacts from 'react-native-contacts';
 import ReactTestRenderer, { act, ReactTestInstance } from 'react-test-renderer';
 import App from '../App';
 import OnboardingTutorial from '../src/components/onboarding/OnboardingTutorial';
@@ -12,9 +13,19 @@ jest.mock('@op-engineering/op-sqlite', () => ({
 // upgrade check and theme are all these tests touch.
 const mockSettings: Record<string, string> = {};
 let mockHasData = false;
+const mockResetQueries: string[] = [];
 jest.mock('../src/db/schema', () => ({
   setupDatabase: jest.fn(async () => {}),
+  DEFAULT_CATEGORIES_SQL: 'INSERT default categories',
   db: {
+    transaction: jest.fn(async (fn: (tx: any) => Promise<void>) =>
+      fn({
+        execute: async (query: string) => {
+          mockResetQueries.push(query);
+          if (query === 'DELETE FROM app_settings') Object.keys(mockSettings).forEach(key => delete mockSettings[key]);
+        },
+      })
+    ),
     execute: jest.fn(async (query: string, params: any[] = []) => {
       if (query.includes('FROM transactions')) {
         return { rows: mockHasData ? [{ 1: 1 }] : [] };
@@ -23,7 +34,7 @@ jest.mock('../src/db/schema', () => ({
         const value = mockSettings[params[0]];
         return { rows: value === undefined ? [] : [{ value }] };
       }
-      if (query.includes('INSERT INTO app_settings')) {
+      if (query.includes('INTO app_settings')) {
         mockSettings[params[0]] = params[1];
       }
       return { rows: [] };
@@ -38,7 +49,8 @@ jest.mock('../src/services/smsIngest', () => ({
 }));
 
 jest.mock('react-native-contacts', () => ({
-  checkPermission: jest.fn(async () => 'authorized'),
+  checkPermission: jest.fn(async () => 'undefined'),
+  requestPermission: jest.fn(async () => 'authorized'),
   getAll: jest.fn(async () => []),
 }));
 
@@ -61,14 +73,21 @@ jest.mock('@react-navigation/native', () => ({
   useRoute: () => ({ params: {} }),
 }));
 
-// Stands in for the tabs with just Settings' "Show App Tutorial" button.
+// Stands in for the tabs with just Settings' "Show App Tutorial" and
+// "Reset App" buttons (the latter without its confirmation).
 jest.mock('../src/screens/TabNavigator', () => {
-  const { createElement } = require('react');
+  const { createElement, Fragment } = require('react');
   const { Text, TouchableOpacity } = require('react-native');
   const { useShowTutorial } = require('../src/components/onboarding/TutorialContext');
+  const { useResetApp } = require('../src/components/AppResetContext');
   return {
     TabNavigator: () =>
-      createElement(TouchableOpacity, { onPress: useShowTutorial() }, createElement(Text, null, 'Show App Tutorial')),
+      createElement(
+        Fragment,
+        null,
+        createElement(TouchableOpacity, { onPress: useShowTutorial() }, createElement(Text, null, 'Show App Tutorial')),
+        createElement(TouchableOpacity, { onPress: useResetApp() }, createElement(Text, null, 'Reset App'))
+      ),
   };
 });
 
@@ -100,13 +119,15 @@ afterEach(() => {
   act(() => renderer?.unmount());
   renderer = null;
   Object.keys(mockSettings).forEach(key => delete mockSettings[key]);
+  mockResetQueries.length = 0;
   mockHasData = false;
+  jest.clearAllMocks();
 });
 
 describe('OnboardingTutorial', () => {
-  const open = async (onDone = jest.fn()) => {
+  const open = async (onDone = jest.fn(), firstRun = true) => {
     await act(async () => {
-      renderer = ReactTestRenderer.create(<OnboardingTutorial visible onDone={onDone} />);
+      renderer = ReactTestRenderer.create(<OnboardingTutorial visible firstRun={firstRun} onDone={onDone} />);
     });
     return { root: renderer!.root, onDone };
   };
@@ -144,9 +165,21 @@ describe('OnboardingTutorial', () => {
     const { root, onDone } = await open();
     await press(root, 'Next');
     await press(root, 'Next');
-    await act(async () => renderer!.update(<OnboardingTutorial visible={false} onDone={onDone} />));
-    await act(async () => renderer!.update(<OnboardingTutorial visible onDone={onDone} />));
+    await act(async () => renderer!.update(<OnboardingTutorial visible={false} firstRun onDone={onDone} />));
+    await act(async () => renderer!.update(<OnboardingTutorial visible firstRun onDone={onDone} />));
     expect(hasText(root, `1 of ${SLIDES.length}`)).toBe(true);
+  });
+
+  // Only the first-run tour asks for contacts when it ends.
+  test.each([
+    [true, true],
+    [false, false],
+  ])('first run %s: the Friends slide says contacts are asked for next: %s', async (firstRun, shown) => {
+    const { root } = await open(jest.fn(), firstRun);
+    const friends = SLIDES.findIndex(slide => slide.key === 'friends');
+    for (let i = 0; i < friends; i++) await press(root, 'Next');
+    const note = SLIDES[friends].firstRunFootnote!;
+    expect(hasText(root, note)).toBe(shown);
   });
 
   const openReviewSlide = async () => {
@@ -189,9 +222,14 @@ describe('first launch', () => {
     const root = await launch();
     expect(hasText(root, 'Welcome to TxnTrace')).toBe(true);
 
+    expect(Contacts.requestPermission).not.toHaveBeenCalled();
     await press(root, 'Skip');
     expect(hasText(root, 'Welcome to TxnTrace')).toBe(false);
     expect(mockSettings.tutorial_seen_version).toBe('1');
+    // Contacts are asked for once the tour is over, so a payer whose name
+    // matches a contact can be matched without picking them.
+    await flush();
+    expect(Contacts.requestPermission).toHaveBeenCalledTimes(1);
 
     act(() => renderer?.unmount());
     const relaunched = await launch();
@@ -214,5 +252,26 @@ describe('first launch', () => {
     expect(hasText(root, 'Welcome to TxnTrace')).toBe(true);
     await press(root, 'Skip');
     expect(hasText(root, 'Welcome to TxnTrace')).toBe(false);
+    // A replay never asks for permissions again.
+    await flush();
+    expect(Contacts.requestPermission).not.toHaveBeenCalled();
+  });
+
+  test('Reset App wipes everything and starts over with the first-run tour', async () => {
+    mockSettings.tutorial_seen_version = '1';
+    const root = await launch();
+    expect(hasText(root, 'Welcome to TxnTrace')).toBe(false);
+
+    await press(root, 'Reset App');
+    expect(mockResetQueries).toContain('DELETE FROM transactions');
+    expect(mockResetQueries).toContain('DELETE FROM app_settings');
+    expect(mockResetQueries[mockResetQueries.length - 1]).toBe('INSERT default categories');
+    expect(hasText(root, 'Welcome to TxnTrace')).toBe(true);
+
+    // As on a new install: the tour is saved as seen and permissions are asked for.
+    await press(root, 'Skip');
+    await flush();
+    expect(mockSettings.tutorial_seen_version).toBe('1');
+    expect(Contacts.requestPermission).toHaveBeenCalledTimes(1);
   });
 });

@@ -16,15 +16,18 @@ import { Slide, SLIDES } from './slides';
 
 interface Props {
   visible: boolean;
+  /** The tour on first launch, as opposed to a replay from Settings. */
+  firstRun: boolean;
   /** Skip, Get started, and Android back on the first slide all end the tour. */
   onDone: () => void;
 }
 
 const LAST = SLIDES.length - 1;
 
-const SlidePage = ({ slide, active, width }: { slide: Slide; active: boolean; width: number }) => {
+const SlidePage = ({ slide, active, width, firstRun }: { slide: Slide; active: boolean; width: number; firstRun: boolean }) => {
   const { colors } = useTheme();
   const { Visual, eyebrow } = slide;
+  const footnote = slide.footnote ?? (firstRun ? slide.firstRunFootnote : undefined);
   const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   // On short screens a slide can run past the fold; hint that it scrolls.
@@ -66,9 +69,7 @@ const SlidePage = ({ slide, active, width }: { slide: Slide; active: boolean; wi
           </View>
         ))}
 
-        {slide.footnote ? (
-          <Text style={[styles.footnote, { color: colors.textSecondary }]}>{slide.footnote}</Text>
-        ) : null}
+        {footnote ? <Text style={[styles.footnote, { color: colors.textSecondary }]}>{footnote}</Text> : null}
       </ScrollView>
     </View>
   );
@@ -79,7 +80,7 @@ interface TourProps extends Props {
   backRef: React.MutableRefObject<() => void>;
 }
 
-const Tour = ({ visible, onDone, backRef }: TourProps) => {
+const Tour = ({ visible, firstRun, onDone, backRef }: TourProps) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -180,7 +181,7 @@ const Tour = ({ visible, onDone, backRef }: TourProps) => {
         <Animated.View style={[styles.strip, { width: width * SLIDES.length, transform: [{ translateX }] }]}>
           {SLIDES.map((slide, i) =>
             i <= reach ? (
-              <SlidePage key={slide.key} slide={slide} active={visible && i === index} width={width} />
+              <SlidePage key={slide.key} slide={slide} active={visible && i === index} width={width} firstRun={firstRun} />
             ) : (
               <View key={slide.key} style={{ width }} />
             )
@@ -228,7 +229,7 @@ const Tour = ({ visible, onDone, backRef }: TourProps) => {
  * Tour means every opening starts on the first slide, and a closed tutorial
  * costs nothing on re-render.
  */
-const OnboardingTutorial = ({ visible, onDone }: Props) => {
+const OnboardingTutorial = ({ visible, firstRun, onDone }: Props) => {
   const backRef = useRef(onDone);
   return (
     <Modal
@@ -238,7 +239,7 @@ const OnboardingTutorial = ({ visible, onDone }: Props) => {
       statusBarTranslucent
       navigationBarTranslucent
     >
-      <Tour visible={visible} onDone={onDone} backRef={backRef} />
+      <Tour visible={visible} firstRun={firstRun} onDone={onDone} backRef={backRef} />
     </Modal>
   );
 };

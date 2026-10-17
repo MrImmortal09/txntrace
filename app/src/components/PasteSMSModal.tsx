@@ -17,6 +17,7 @@ import { useTheme } from '../theme/ThemeProvider';
 import BankIcon from './BankIcon';
 import { previewParsedSMS, ingestManualSMS } from '../parsers/sms';
 import { BANKS } from '../constants/banks';
+import { APP_NAME } from '../constants/appName';
 
 interface Props {
   visible: boolean;
@@ -86,7 +87,7 @@ const PasteSMSModal = ({ visible, onClose, onSuccess }: Props) => {
       if (result.duplicate) {
         Alert.alert(
           'Already Recorded',
-          'This transaction was already added to TxnTrace previously.',
+          `This transaction was already added to ${APP_NAME} previously.`,
           [{ text: 'OK', onPress: () => { reset(); onSuccess(); } }]
         );
       } else {

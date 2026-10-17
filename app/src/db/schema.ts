@@ -4,6 +4,17 @@ export const db = open({
   name: 'txntrace.sqlite',
 });
 
+/** The categories a new install starts with; Reset App puts them back too. */
+export const DEFAULT_CATEGORIES_SQL = `
+  INSERT OR IGNORE INTO categories (id, name) VALUES
+  ('food', 'Food'),
+  ('transport', 'Transport'),
+  ('bills', 'Bills'),
+  ('shopping', 'Shopping'),
+  ('rent', 'Rent'),
+  ('other', 'Other');
+`;
+
 export const setupDatabase = async () => {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS transactions (
@@ -238,13 +249,5 @@ export const setupDatabase = async () => {
     );
   `);
 
-  await db.execute(`
-    INSERT OR IGNORE INTO categories (id, name) VALUES 
-    ('food', 'Food'), 
-    ('transport', 'Transport'), 
-    ('bills', 'Bills'), 
-    ('shopping', 'Shopping'), 
-    ('rent', 'Rent'), 
-    ('other', 'Other');
-  `);
+  await db.execute(DEFAULT_CATEGORIES_SQL);
 };

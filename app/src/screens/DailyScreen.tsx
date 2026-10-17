@@ -8,6 +8,7 @@ import SwipeableRow from '../components/SwipeableRow';
 import SplitModal from '../components/SplitModal';
 import BankIcon from '../components/BankIcon';
 import PasteSMSModal from '../components/PasteSMSModal';
+import SmsAccessBanner from '../components/SmsAccessBanner';
 import ContactPickerModal, { PickedContact } from '../components/ContactPickerModal';
 import { useTheme } from '../theme/ThemeProvider';
 import { DOUBLE_TAP_DELAY } from '../constants/gestures';
@@ -175,6 +176,8 @@ const DailyScreen = () => {
           </Svg>
         </TouchableOpacity>
       </View>
+
+      <SmsAccessBanner />
 
       <View style={styles.summaryRow}>
         <View style={[styles.summaryCard, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>

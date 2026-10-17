@@ -10,12 +10,16 @@ import {
   ToastAndroid,
   Platform,
   Animated,
+  KeyboardAvoidingView,
+  Alert,
+  Keyboard,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
 import { openLocationInGoogleMaps } from '../utils/maps';
 import { getTransactionReward, setTransactionRewardTier, TransactionRewardInfo } from '../services/creditCards';
 import { formatAcceleratedSplit, formatTierRate, formatUnits } from '../services/rewards/engine';
 import RewardTierPicker from './RewardTierPicker';
+import TransactionEditForm from './TransactionEditForm';
 
 export interface TransactionRow {
   id: string;
@@ -41,6 +45,8 @@ export interface TransactionRow {
 interface Props {
   transaction: TransactionRow | null;
   onClose: () => void;
+  /** Shows an Edit button for category and note; called with the saved row. */
+  onEdited?: (updated: TransactionRow) => void;
 }
 
 const DETAIL_FIELDS: [keyof TransactionRow, string][] = [
@@ -117,9 +123,14 @@ const CardRewardRow = ({ transactionId, cardId, amount }: { transactionId: strin
   );
 };
 
-const TransactionDetailModal = ({ transaction, onClose }: Props) => {
+const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
   const { colors } = useTheme();
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const dirtyRef = useRef(false);
+  const trackDirty = useCallback((dirty: boolean) => {
+    dirtyRef.current = dirty;
+  }, []);
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTimerRef = useRef<any>(null);
 
@@ -131,7 +142,28 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
     };
   }, []);
 
+  // Every spend opens on its details, not mid-edit.
+  const transactionId = transaction?.id;
+  useEffect(() => {
+    setEditing(false);
+    dirtyRef.current = false;
+  }, [transactionId]);
+
   if (!transaction) return null;
+
+  const stopEditing = () => {
+    dirtyRef.current = false;
+    setEditing(false);
+  };
+
+  // Leaving mid-edit asks first when there's something unsaved.
+  const leaveEdit = (then: () => void) => {
+    if (!editing || !dirtyRef.current) return then();
+    Alert.alert('Discard changes?', 'Your category and note changes haven’t been saved.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: then },
+    ]);
+  };
 
   const handleCopy = (text: string | null | undefined, label: string) => {
     if (!text) return;
@@ -182,9 +214,20 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
   })();
 
   return (
-    <Modal visible={!!transaction} animationType="fade" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+    <Modal
+      visible={!!transaction}
+      animationType="fade"
+      transparent
+      // Android back steps out of editing before it closes the sheet.
+      onRequestClose={() => (editing ? leaveEdit(stopEditing) : onClose())}
+    >
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {/* While editing, a tap outside only puts the keyboard away. */}
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={() => (editing ? Keyboard.dismiss() : onClose())}
+        />
         <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
           {/* Header with Merchant Name */}
           <View style={styles.header}>
@@ -200,9 +243,21 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Text style={[styles.closeButton, { color: colors.textSecondary }]}>✕</Text>
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              {onEdited && !editing ? (
+                <TouchableOpacity
+                  style={[styles.editButton, { borderColor: colors.border }]}
+                  onPress={() => setEditing(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit category and note"
+                >
+                  <Text style={[styles.editButtonText, { color: colors.primary }]}>Edit</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity onPress={() => leaveEdit(onClose)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={[styles.closeButton, { color: colors.textSecondary }]}>✕</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Amount (Hold to copy) */}
@@ -235,7 +290,7 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
           ) : null}
 
           {/* Location */}
-          {transaction.location ? (
+          {transaction.location && !editing ? (
             <TouchableOpacity
               style={[styles.locationCard, { backgroundColor: colors.background, borderColor: colors.border }]}
               onPress={() => openLocationInGoogleMaps(transaction.location, transaction.latitude, transaction.longitude)}
@@ -250,65 +305,77 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
             </TouchableOpacity>
           ) : null}
 
-          <ScrollView style={styles.fieldsScroll} showsVerticalScrollIndicator={false}>
-            {transaction.card_id && transaction.type === 'debit' ? (
-              <CardRewardRow transactionId={transaction.id} cardId={transaction.card_id} amount={transaction.amount} />
-            ) : null}
+          {editing ? (
+            <TransactionEditForm
+              transaction={transaction}
+              onCancel={stopEditing}
+              onDirtyChange={trackDirty}
+              onSaved={updated => {
+                stopEditing();
+                onEdited?.(updated);
+              }}
+            />
+          ) : (
+            <ScrollView style={styles.fieldsScroll} showsVerticalScrollIndicator={false}>
+              {transaction.card_id && transaction.type === 'debit' ? (
+                <CardRewardRow transactionId={transaction.id} cardId={transaction.card_id} amount={transaction.amount} />
+              ) : null}
 
-            {/* Specially Highlighted: Received Message Content (Hold to copy) */}
-            {transaction.sms_body ? (
-              <TouchableOpacity
-                style={[styles.messageCard, { backgroundColor: colors.background, borderColor: colors.border }]}
-                activeOpacity={0.8}
-                onLongPress={() => handleCopy(transaction.sms_body, 'Message')}
-                onPress={() => handleCopy(transaction.sms_body, 'Message')}
-                accessibilityRole="button"
-                accessibilityLabel="Received SMS Message content. Hold to copy."
-              >
-                <View style={styles.messageHeaderRow}>
-                  <Text style={[styles.messageCardLabel, { color: colors.textSecondary }]}>
-                    Received SMS Message
-                  </Text>
-                  <View style={[styles.copyBadge, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                    <Text style={[styles.copyBadgeText, { color: colors.primary }]}>📋 Hold to copy</Text>
-                  </View>
-                </View>
-                <Text style={[styles.messageCardBody, { color: colors.text }]} selectable>
-                  {transaction.sms_body}
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-
-            {/* Other Transaction Details (Hold to copy any row) */}
-            {DETAIL_FIELDS.map(([key, label]) => {
-              const value = transaction[key];
-              if (value === null || value === undefined || value === '') return null;
-              const strVal = String(value);
-
-              return (
+              {/* Specially Highlighted: Received Message Content (Hold to copy) */}
+              {transaction.sms_body ? (
                 <TouchableOpacity
-                  key={key}
-                  style={[styles.fieldRow, { borderBottomColor: colors.border }]}
-                  activeOpacity={0.7}
-                  onLongPress={() => handleCopy(strVal, label)}
-                  onPress={() => handleCopy(strVal, label)}
+                  style={[styles.messageCard, { backgroundColor: colors.background, borderColor: colors.border }]}
+                  activeOpacity={0.8}
+                  onLongPress={() => handleCopy(transaction.sms_body, 'Message')}
+                  onPress={() => handleCopy(transaction.sms_body, 'Message')}
                   accessibilityRole="button"
-                  accessibilityLabel={`${label}: ${strVal}. Hold to copy.`}
+                  accessibilityLabel="Received SMS Message content. Hold to copy."
                 >
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]} selectable>
-                    {label}
-                  </Text>
-                  <Text style={[styles.fieldValue, { color: colors.text }]} selectable numberOfLines={3}>
-                    {strVal}
+                  <View style={styles.messageHeaderRow}>
+                    <Text style={[styles.messageCardLabel, { color: colors.textSecondary }]}>
+                      Received SMS Message
+                    </Text>
+                    <View style={[styles.copyBadge, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <Text style={[styles.copyBadgeText, { color: colors.primary }]}>📋 Hold to copy</Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.messageCardBody, { color: colors.text }]} selectable>
+                    {transaction.sms_body}
                   </Text>
                 </TouchableOpacity>
-              );
-            })}
+              ) : null}
 
-            <Text style={[styles.copyTip, { color: colors.textSecondary }]}>
-              💡 Hold any text or message to copy to clipboard
-            </Text>
-          </ScrollView>
+              {/* Other Transaction Details (Hold to copy any row) */}
+              {DETAIL_FIELDS.map(([key, label]) => {
+                const value = transaction[key];
+                if (value === null || value === undefined || value === '') return null;
+                const strVal = String(value);
+
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    style={[styles.fieldRow, { borderBottomColor: colors.border }]}
+                    activeOpacity={0.7}
+                    onLongPress={() => handleCopy(strVal, label)}
+                    onPress={() => handleCopy(strVal, label)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${label}: ${strVal}. Hold to copy.`}
+                  >
+                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]} selectable>
+                      {label}
+                    </Text>
+                    <Text style={[styles.fieldValue, { color: colors.text }]} selectable numberOfLines={3}>
+                      {strVal}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              <Text style={[styles.copyTip, { color: colors.textSecondary }]}>
+                💡 Hold any text or message to copy to clipboard
+              </Text>
+            </ScrollView>
+          )}
 
           {/* Floating Toast Notification on Copy */}
           {copiedLabel && (
@@ -328,7 +395,7 @@ const TransactionDetailModal = ({ transaction, onClose }: Props) => {
             </Animated.View>
           )}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -351,6 +418,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   headerTitleWrap: { flex: 1, marginRight: 12 },
   merchant: { fontSize: 20, fontWeight: 'bold' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  editButton: { borderWidth: 1, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 12 },
+  editButtonText: { fontSize: 14, fontWeight: '700' },
   closeButton: { fontSize: 18, padding: 4 },
   amount: { fontSize: 32, fontWeight: 'bold', marginTop: 12 },
   date: { fontSize: 14, marginTop: 4, marginBottom: 12 },
