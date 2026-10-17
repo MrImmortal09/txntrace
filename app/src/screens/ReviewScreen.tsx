@@ -9,6 +9,7 @@ import {
   matchCreditToContact,
 } from '../services/settlements';
 import { checkNewMessages } from '../services/smsIngest';
+import { requestContactsAccess } from '../services/permissions';
 import {
   CardRewardContext,
   loadCardRewardContext,
@@ -284,8 +285,7 @@ const ReviewScreen = () => {
 
   const openSplitModal = async () => {
     try {
-      const permission = await Contacts.requestPermission();
-      if (permission === 'authorized') {
+      if (await requestContactsAccess()) {
         const fetchedContacts = await Contacts.getAll();
         setContacts(fetchedContacts);
         setSplitModalVisible(true);
@@ -303,8 +303,6 @@ const ReviewScreen = () => {
         const map: Record<string, string> = {};
         for (const r of arr) map[r.contactId] = r.lastUsed;
         setContactRecency(map);
-      } else {
-        Alert.alert('Permission Denied', 'Please allow contacts access in settings.');
       }
     } catch (error) {
       console.error(error);

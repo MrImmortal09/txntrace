@@ -17,6 +17,7 @@ import { db } from '../db/schema';
 import { useTheme } from '../theme/ThemeProvider';
 import BankIcon from '../components/BankIcon';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
+import SmsAccessBanner from '../components/SmsAccessBanner';
 import { checkNewMessages } from '../services/smsIngest';
 
 const CHART_HEIGHT = 140;
@@ -438,6 +439,8 @@ const HomeScreen = () => {
           <Text style={[styles.header, { color: colors.text }]}>Dashboard</Text>
         </View>
 
+        <SmsAccessBanner style={styles.smsBanner} />
+
         {/* Date Navigation & Range Control */}
         <View style={[styles.dateNavCard, { backgroundColor: colors.surface, shadowColor: colors.cardShadow, borderColor: colors.border }]}>
           <TouchableOpacity
@@ -781,7 +784,14 @@ const HomeScreen = () => {
       </Modal>
 
       {/* Transaction Detail Modal - Shows full info on click */}
-      <TransactionDetailModal transaction={selectedTxn} onClose={() => setSelectedTxn(null)} />
+      <TransactionDetailModal
+        transaction={selectedTxn}
+        onClose={() => setSelectedTxn(null)}
+        onEdited={updated => {
+          setSelectedTxn(updated);
+          loadDashboardData();
+        }}
+      />
     </SafeAreaView>
   );
 };
@@ -791,6 +801,7 @@ const styles = StyleSheet.create({
   scrollContent: { padding: 16, paddingBottom: 40 },
   headerBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   header: { fontSize: 28, fontWeight: '700' },
+  smsBanner: { marginHorizontal: 0, marginTop: 0, marginBottom: 16 },
 
   // Date Nav Card
   dateNavCard: {

@@ -3,7 +3,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { StatusBar, StyleSheet, View, Text, AppState, TouchableOpacity, Platform, PermissionsAndroid } from 'react-native';
+import { StatusBar, StyleSheet, View, Text, AppState, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { TabNavigator } from './src/screens/TabNavigator';
@@ -12,24 +12,12 @@ import { checkNewMessages } from './src/services/smsIngest';
 import { checkForAppUpdate } from './src/services/playStoreUpdate';
 import { rematchAfterMatcherUpdate } from './src/services/creditCards';
 import { markTutorialSeen, shouldShowTutorial } from './src/services/onboarding';
+import { requestSmsAccess } from './src/services/permissions';
 import OnboardingTutorial from './src/components/onboarding/OnboardingTutorial';
 import { TutorialContext } from './src/components/onboarding/TutorialContext';
+import { PermissionSheetHost } from './src/components/PermissionSheet';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
-
-const requestPermissions = async () => {
-  if (Platform.OS === 'android') {
-    try {
-      await PermissionsAndroid.requestMultiple([
-        PermissionsAndroid.PERMISSIONS.READ_SMS,
-        PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
-        PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
-      ]);
-    } catch (err) {
-      console.warn(err);
-    }
-  }
-};
 
 function MainApp() {
   const { isDark, colors } = useTheme();
@@ -57,13 +45,12 @@ function MainApp() {
       try {
         await setupDatabase();
         // First launch: the tutorial explains why SMS access is needed, so the
-        // permission prompts wait until it's done. If the flag can't be read,
-        // don't hold the app up with a tutorial.
-        const showTutorial = await shouldShowTutorial().catch(() => false);
-        if (showTutorial) {
+        // one permission prompt waits until it's done. Later launches never
+        // prompt; Home and Daily show a banner while SMS access is off, and
+        // contacts are asked for when a split first needs them. If the flag
+        // can't be read, don't hold the app up with a tutorial.
+        if (await shouldShowTutorial().catch(() => false)) {
           setTutorial('firstRun');
-        } else {
-          await requestPermissions();
         }
         setDbInitialized(true);
         // In the background: a big SMS backlog shouldn't hold up launch, and a
@@ -94,7 +81,7 @@ function MainApp() {
     setTutorial('hidden');
     if (tutorial !== 'firstRun') return;
     markTutorialSeen().catch(e => console.error('Failed to save tutorial progress:', e));
-    requestPermissions();
+    requestSmsAccess();
   };
 
   if (!dbInitialized) {
@@ -125,6 +112,7 @@ function MainApp() {
         </NavigationContainer>
       </TutorialContext.Provider>
       <OnboardingTutorial visible={tutorial !== 'hidden'} onDone={finishTutorial} />
+      <PermissionSheetHost />
     </SafeAreaProvider>
   );
 }

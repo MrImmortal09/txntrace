@@ -8,6 +8,12 @@ jest.mock('@op-engineering/op-sqlite', () => ({
   open: jest.fn(() => ({ execute: jest.fn() })),
 }));
 
+// Pulled in by the SMS access banner's permission helpers.
+jest.mock('react-native-contacts', () => ({
+  checkPermission: jest.fn(async () => 'authorized'),
+  requestPermission: jest.fn(async () => 'authorized'),
+}));
+
 jest.mock('../src/db/schema', () => {
   const store: {
     transactions: any[];
