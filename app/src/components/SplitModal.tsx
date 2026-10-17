@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Alert, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, SafeAreaView } from 'react-native';
 import Contacts from 'react-native-contacts';
 import { db } from '../db/schema';
 import { useTheme } from '../theme/ThemeProvider';
 import { createSplit } from '../services/settlements';
+import { requestContactsAccess } from '../services/permissions';
 
 interface SplitContact {
   id: string;
@@ -37,12 +38,9 @@ const SplitModal = ({ visible, transactionId, amount, onClose, onSaved }: Props)
 
   const loadContacts = async () => {
     try {
-      const permission = await Contacts.requestPermission();
-      if (permission === 'authorized') {
+      if (await requestContactsAccess()) {
         setContacts(await Contacts.getAll());
         setLoaded(true);
-      } else {
-        Alert.alert('Permission Denied', 'Please allow contacts access in Settings.');
       }
     } catch (error) {
       console.error('Failed to load contacts:', error);

@@ -39,7 +39,7 @@
 		<true/>
 	</dict>
 	<key>NSContactsUsageDescription</key>
-	<string>TxnTrace requires access to your contacts to split transactions.</string>
+	<string>Pick who you’re splitting a spend with, and match money a friend sends you to the right person. Only names are used.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>TxnTrace uses your location to record the place of transactions.</string>
 	<key>RCTNewArchEnabled</key>

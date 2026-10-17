@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Clipboard, T
 import { useFocusEffect } from '@react-navigation/native';
 import { db } from '../db/schema';
 import { checkNewMessages } from '../services/smsIngest';
+import { useTheme } from '../theme/ThemeProvider';
 
 interface SmsLogEntry {
   id: string;
@@ -27,6 +28,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 
 const LogsScreen = () => {
+  const { colors } = useTheme();
   const [logs, setLogs] = useState<SmsLogEntry[]>([]);
 
   const loadLogs = useCallback(async () => {
@@ -71,19 +73,21 @@ const LogsScreen = () => {
   const renderItem = ({ item }: { item: SmsLogEntry }) => {
     const isParsed = item.status === 'parsed';
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
         <View style={styles.headerRow}>
-          <Text style={styles.sender} numberOfLines={1}>{item.sender || '(no sender)'}</Text>
-          <View style={[styles.statusBadge, isParsed ? styles.statusParsed : styles.statusUnparsed]}>
-            <Text style={styles.statusText}>{isParsed ? 'Parsed' : 'Unparsed'}</Text>
+          <Text style={[styles.sender, { color: colors.text }]} numberOfLines={1}>{item.sender || '(no sender)'}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: (isParsed ? colors.success : colors.danger) + '22' }]}>
+            <Text style={[styles.statusText, { color: isParsed ? colors.success : colors.danger }]}>
+              {isParsed ? 'Parsed' : 'Unparsed'}
+            </Text>
           </View>
         </View>
 
-        <Text style={styles.meta}>
+        <Text style={[styles.meta, { color: colors.textSecondary }]}>
           {SOURCE_LABEL[item.source] || item.source} · {new Date(item.received_at).toLocaleString()}
         </Text>
 
-        <Text style={styles.label}>Message (Hold to copy)</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Message (Hold to copy)</Text>
         <TouchableOpacity
           activeOpacity={0.8}
           onLongPress={() => {
@@ -95,12 +99,12 @@ const LogsScreen = () => {
             }
           }}
         >
-          <Text style={styles.body} selectable>{item.body}</Text>
+          <Text style={[styles.body, { color: colors.text }]} selectable>{item.body}</Text>
         </TouchableOpacity>
 
         {isParsed && (
           <>
-            <Text style={styles.label}>Parsed</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Parsed</Text>
             <TouchableOpacity
               activeOpacity={0.8}
               onLongPress={() => {
@@ -113,7 +117,7 @@ const LogsScreen = () => {
                 }
               }}
             >
-              <Text style={styles.parsed} selectable>
+              <Text style={[styles.parsed, { color: colors.text }]} selectable>
                 {item.bank} · {item.type === 'credit' ? '+' : '-'}
                 {item.amount} · {item.merchant}
               </Text>
@@ -135,7 +139,7 @@ const LogsScreen = () => {
               }
             }}
           >
-            <Text style={styles.reference} selectable>Ref: {item.reference}</Text>
+            <Text style={[styles.reference, { color: colors.textSecondary }]} selectable>Ref: {item.reference}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -143,17 +147,17 @@ const LogsScreen = () => {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.topBar}>
-        <Text style={styles.title}>SMS Logs</Text>
+        <Text style={[styles.title, { color: colors.text }]}>SMS Logs</Text>
         <TouchableOpacity onPress={clearLogs}>
-          <Text style={styles.clearText}>Clear</Text>
+          <Text style={[styles.clearText, { color: colors.danger }]}>Clear</Text>
         </TouchableOpacity>
       </View>
 
       {logs.length === 0 ? (
         <View style={styles.center}>
-          <Text style={styles.emptyText}>No messages logged yet.</Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No messages logged yet.</Text>
         </View>
       ) : (
         <FlatList
@@ -168,7 +172,7 @@ const LogsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1 },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -177,33 +181,29 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
   },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#333' },
-  clearText: { color: '#FF3B30', fontWeight: '600', fontSize: 15 },
+  title: { fontSize: 24, fontWeight: 'bold' },
+  clearText: { fontWeight: '600', fontSize: 15 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { fontSize: 15, color: '#888' },
+  emptyText: { fontSize: 15 },
   listContent: { padding: 16, paddingTop: 4 },
   card: {
-    backgroundColor: 'white',
     borderRadius: 8,
     padding: 14,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
+    shadowOpacity: 1,
     shadowRadius: 4,
     shadowOffset: { height: 2, width: 0 },
     elevation: 2,
   },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  sender: { fontSize: 15, fontWeight: '700', color: '#333', flex: 1, marginRight: 8 },
+  sender: { fontSize: 15, fontWeight: '700', flex: 1, marginRight: 8 },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  statusParsed: { backgroundColor: '#e2f7e9' },
-  statusUnparsed: { backgroundColor: '#fdecea' },
-  statusText: { fontSize: 11, fontWeight: '700', color: '#333' },
-  meta: { fontSize: 12, color: '#999', marginTop: 2, marginBottom: 10 },
-  label: { fontSize: 11, fontWeight: '700', color: '#aaa', textTransform: 'uppercase', marginBottom: 3 },
-  body: { fontSize: 13, color: '#444', lineHeight: 18, marginBottom: 10 },
-  parsed: { fontSize: 14, color: '#222', fontWeight: '600' },
-  reference: { fontSize: 11, color: '#bbb', marginTop: 6 },
+  statusText: { fontSize: 11, fontWeight: '700' },
+  meta: { fontSize: 12, marginTop: 2, marginBottom: 10 },
+  label: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 3 },
+  body: { fontSize: 13, lineHeight: 18, marginBottom: 10 },
+  parsed: { fontSize: 14, fontWeight: '600' },
+  reference: { fontSize: 11, marginTop: 6 },
 });
 
 export default LogsScreen;

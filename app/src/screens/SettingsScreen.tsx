@@ -18,6 +18,8 @@ import {
   getAuthToken,
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
+import { hasContactsAccess } from '../services/permissions';
+import { clearTransactionData } from '../services/dataReset';
 import { checkForAppUpdate, useUpdateStatus } from '../services/playStoreUpdate';
 import { useTheme } from '../theme/ThemeProvider';
 import { OTPLoginModal } from '../components/OTPLoginModal';
@@ -148,12 +150,12 @@ const SettingsScreen = () => {
       const { count } = await syncCardsFromServer();
 
       // Contacts only push one way (phone -> server), and only if contacts
-      // permission is actually granted — the web side just won't have a
-      // contact list to split against until it is, everything else still syncs.
+      // permission is already granted (a split asks for it) — sync never
+      // prompts. The web side just won't have a contact list to split
+      // against until then; everything else still syncs.
       let contactsMsg = '';
       try {
-        const permission = await Contacts.requestPermission();
-        if (permission === 'authorized') {
+        if (await hasContactsAccess()) {
           const all = await Contacts.getAll();
           const payload = all.map(c => ({
             id: c.recordID,
@@ -210,8 +212,7 @@ const SettingsScreen = () => {
     try {
       let contactsPayload: { id: string; name: string }[] = [];
       try {
-        const permission = await Contacts.requestPermission();
-        if (permission === 'authorized') {
+        if (await hasContactsAccess()) {
           const all = await Contacts.getAll();
           contactsPayload = all.map(c => ({
             id: c.recordID,
@@ -287,13 +288,29 @@ const SettingsScreen = () => {
     }
   };
 
-  const clearDb = async () => {
-    try {
-      await db.execute('DELETE FROM transactions');
-      log('DB cleared ✅');
-    } catch (e: any) {
-      log(`Clear DB FAILED: ${e.message}`);
-    }
+  const confirmClearTransactions = () => {
+    Alert.alert(
+      'Delete all transactions?',
+      'Every transaction on this phone is deleted, along with friend splits and balances. ' +
+        'Cards, settings and the SMS log are kept, and anything already backed up to the server stays there.\n\n' +
+        'This can’t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearTransactionData();
+              log('All transactions, splits and settlements deleted ✅');
+            } catch (e: any) {
+              log(`Delete FAILED: ${e.message}`);
+              Alert.alert('Delete failed', e.message || 'Nothing was deleted.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const runReparse = async () => {
@@ -518,8 +535,11 @@ const SettingsScreen = () => {
             {reparsing ? 'Re-parsing…' : 'Re-parse Stored Messages'}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.button, { backgroundColor: colors.danger }]} onPress={clearDb}>
-          <Text style={styles.buttonText}>Clear DB (for testing)</Text>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, { borderColor: colors.danger }]}
+          onPress={confirmClearTransactions}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.danger }]}>Delete All Transactions</Text>
         </TouchableOpacity>
 
         {debugLog.length > 0 && (

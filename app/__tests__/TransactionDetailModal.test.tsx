@@ -22,6 +22,12 @@ jest.mock('../src/theme/ThemeProvider', () => ({
   }),
 }));
 
+// The edit form's category list and save.
+jest.mock('../src/services/transactionEdits', () => ({
+  loadCategories: jest.fn(async () => []),
+  updateTransactionDetails: jest.fn(async () => {}),
+}));
+
 jest.mock('../src/utils/maps', () => ({
   openLocationInGoogleMaps: jest.fn(),
 }));

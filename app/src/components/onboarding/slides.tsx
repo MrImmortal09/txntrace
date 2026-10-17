@@ -127,6 +127,7 @@ export const SLIDES: Slide[] = [
       { icon: '➕', lead: 'The + button', text: 'starts a balance with someone you haven’t split with yet.' },
     ],
     Visual: FriendsVisual,
+    footnote: 'After the tour, TxnTrace asks for your contacts, so you can pick friends and their payments match to them.',
   },
   {
     key: 'home',
@@ -140,6 +141,7 @@ export const SLIDES: Slide[] = [
         text: 'to step through months, or tap the month for Last 30 days, This year or a custom range.',
       },
       { icon: '📊', lead: 'Spend by category,', text: 'plus every spend in a list you can sort by category, date or amount.' },
+      { icon: '✏️', lead: 'Tap a spend, then Edit,', text: 'to fix its category or add a note.' },
       { icon: '🔄', lead: 'Pull down', text: 'to refresh.' },
     ],
     Visual: HomeVisual,

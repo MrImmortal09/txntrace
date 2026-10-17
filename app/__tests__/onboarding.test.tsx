@@ -1,4 +1,5 @@
 import React from 'react';
+import Contacts from 'react-native-contacts';
 import ReactTestRenderer, { act, ReactTestInstance } from 'react-test-renderer';
 import App from '../App';
 import OnboardingTutorial from '../src/components/onboarding/OnboardingTutorial';
@@ -38,7 +39,8 @@ jest.mock('../src/services/smsIngest', () => ({
 }));
 
 jest.mock('react-native-contacts', () => ({
-  checkPermission: jest.fn(async () => 'authorized'),
+  checkPermission: jest.fn(async () => 'undefined'),
+  requestPermission: jest.fn(async () => 'authorized'),
   getAll: jest.fn(async () => []),
 }));
 
@@ -101,6 +103,7 @@ afterEach(() => {
   renderer = null;
   Object.keys(mockSettings).forEach(key => delete mockSettings[key]);
   mockHasData = false;
+  jest.clearAllMocks();
 });
 
 describe('OnboardingTutorial', () => {
@@ -189,9 +192,14 @@ describe('first launch', () => {
     const root = await launch();
     expect(hasText(root, 'Welcome to TxnTrace')).toBe(true);
 
+    expect(Contacts.requestPermission).not.toHaveBeenCalled();
     await press(root, 'Skip');
     expect(hasText(root, 'Welcome to TxnTrace')).toBe(false);
     expect(mockSettings.tutorial_seen_version).toBe('1');
+    // Contacts are asked for once the tour is over, so a payer whose name
+    // matches a contact can be matched without picking them.
+    await flush();
+    expect(Contacts.requestPermission).toHaveBeenCalledTimes(1);
 
     act(() => renderer?.unmount());
     const relaunched = await launch();
@@ -214,5 +222,8 @@ describe('first launch', () => {
     expect(hasText(root, 'Welcome to TxnTrace')).toBe(true);
     await press(root, 'Skip');
     expect(hasText(root, 'Welcome to TxnTrace')).toBe(false);
+    // A replay never asks for permissions again.
+    await flush();
+    expect(Contacts.requestPermission).not.toHaveBeenCalled();
   });
 });
