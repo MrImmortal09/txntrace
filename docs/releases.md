@@ -9,7 +9,8 @@ Most of this page is about Android, because that is where the app itself decides
 | What | When it runs | Workflow |
 | --- | --- | --- |
 | Android app | Manually, from the Actions tab | [android-release.yml](../.github/workflows/android-release.yml) |
-| iOS app | Every push to `main`, or manually | [ios-release.yml](../.github/workflows/ios-release.yml) |
+| iOS app, App Store (TestFlight) | Manually, from the Actions tab | [ios-app-store.yml](../.github/workflows/ios-app-store.yml) |
+| iOS app, ad-hoc install | Every push to `main`, or manually | [ios-release.yml](../.github/workflows/ios-release.yml) |
 | Server | Every push to `main`, or manually | [deploy.yml](../.github/workflows/deploy.yml) |
 
 ## Cutting an Android release
@@ -30,6 +31,35 @@ The run then does the following, in order:
    - The version code is the workflow's run number, so every run produces a higher code than the last. Google Play compares version codes to decide whether an update exists.
 3. **Publishes a GitHub Release** `vX.Y.Z` with both files attached and the list of commits since the previous tag.
 4. **Uploads the AAB to Google Play** on the chosen track, fully rolled out, with the chosen update priority. This step only runs when the `PLAY_STORE_CREDENTIALS` secret is set. Without it the step is skipped and nothing reaches Play.
+
+## Cutting an iOS App Store release
+
+Go to **Actions → Create iOS Release (App Store Connect) → Run workflow** on `main`. It has no inputs.
+
+1. It builds `main` as the version in `app/package.json`, with the minutes since 1970 as the build number, so every upload has a higher number than the last.
+2. It signs the build for the App Store and uploads it to App Store Connect. Once Apple has processed it, usually within half an hour, it shows in **TestFlight**.
+3. Nothing reaches the App Store until someone picks the build in App Store Connect and sends it for review.
+
+The Android release is what bumps and tags the version, so for a new version run that first, then this. App Store Connect takes further builds of a version only until that version is released on the App Store; after that it needs a new version.
+
+`just ios-release` does the same from a Mac, and `UPLOAD=0` keeps the `.ipa` in `dist-ios/` instead of uploading it. [scripts/ios-release.sh](../scripts/ios-release.sh) lists its inputs.
+
+What it needs from the repository:
+
+| Secrets | For |
+| --- | --- |
+| `IOS_DIST_CERT_P12_BASE64`, `IOS_DIST_CERT_PASSWORD` | An Apple Distribution certificate with its private key, exported from Keychain Access as a `.p12` with a password, then base64. |
+| `IOS_PROFILE_BASE64` | An App Store provisioning profile for the app's App ID, base64. The bundle ID, team and App Group all come from it. |
+| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | An App Store Connect API key with the App Manager role, for the upload. `ASC_KEY_P8` is the text of the `.p8` file. |
+
+The run stops at the start, naming what is missing, until all six are set.
+
+How the signing works:
+
+- **Only the app target is signed.** Its Release configuration reads `TXNTRACE_CODE_SIGN_STYLE`, `TXNTRACE_CODE_SIGN_IDENTITY`, `TXNTRACE_PROVISIONING_PROFILE`, `TXNTRACE_BUNDLE_ID` and `TXNTRACE_TEAM_ID`. Each falls back to what the project had before, so Xcode and `just ios-install` work as they did. The script sets them on the command line. Plain `CODE_SIGN_STYLE` and the rest would reach every CocoaPods target as well, and the privacy bundles inside the app would all get the app's bundle ID, which App Store Connect turns away.
+- **The App Group is swapped for the build.** The Shortcuts intent hands messages to the app through the App Group's shared container. The checked-in group belongs to the ad-hoc signing team, so the script writes the profile's group into the entitlements and the Swift files that name it, and puts the files back afterwards.
+- **The SMS filter extension isn't in the build.** It isn't embedded in the app today. If it is embedded again, it needs its own App ID under the app's bundle ID, with the App Group, and a second profile.
+- **The runner uses Xcode 26.6** (`XCODE` in the workflow). App Store Connect has taken only builds made with Xcode 26 or later since 28 April 2026.
 
 ## Update priority
 
@@ -124,7 +154,7 @@ To see the silent install, accept the update, let it download, then leave the ph
 
 ## iOS and server
 
-- **iOS.** Every push to `main` builds a signed IPA and publishes it on GitHub Releases as an over-the-air install. A manual run can also bump the version. The in-app update flow described on this page is Android only.
+- **iOS.** App Store builds go to TestFlight when the App Store Connect workflow is run, as described above. Separately, every push to `main` builds an ad-hoc IPA and publishes it on GitHub Releases as an over-the-air install, and a manual run of that workflow can also bump the version. The in-app update flow described on this page is Android only.
 - **Server.** Every push to `main` connects to the server, pulls `main`, installs the Python requirements and restarts the service.
 
 Because both run on every push to `main`, an Android-only change pushed to `main` still triggers an iOS build and a server redeploy.

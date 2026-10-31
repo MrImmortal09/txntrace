@@ -1,0 +1,114 @@
+name: Create iOS Release (App Store Connect)
+
+# Uploads main to App Store Connect as the version in app/package.json, where it shows up in
+# TestFlight. Nothing reaches the App Store until someone sends the build for review there.
+# The Android release bumps and tags the version, so run that first for a new one. App Store
+# Connect takes further builds of a version only until that version is released.
+#
+# The ad-hoc build in ios-release.yml is separate and still runs on every push to main.
+on:
+  workflow_dispatch:
+
+# Two uploads at once could race for the same build number.
+concurrency:
+  group: ios-app-store
+  cancel-in-progress: false
+
+env:
+  # Apple takes uploads built with Xcode 26 or later since 28 April 2026. The newest the runner
+  # image has; move it on when the image does.
+  XCODE: '26.6'
+
+jobs:
+  release:
+    name: Build & Upload iOS
+    runs-on: macos-26
+    timeout-minutes: 75
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check Branch and Signing Secrets
+        env:
+          REF: ${{ github.ref_name }}
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          if [ "$REF" != "main" ]; then
+            echo "::error::Releases are cut from main; this run is on $REF."
+            exit 1
+          fi
+          missing=0
+          for name in IOS_DIST_CERT_P12_BASE64 IOS_DIST_CERT_PASSWORD IOS_PROFILE_BASE64 ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing GitHub secret $name"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Select Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_$XCODE.app" && xcodebuild -version
+
+      - name: Install Signing Certificate and Profile
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -e
+          # The runner has no Xcode account to sign with, so the Apple Distribution certificate
+          # goes into a keychain of its own. The script installs the App Store profile, reads the
+          # bundle ID, team and App Group from it, and signs the app target by hand with the two.
+          KEYCHAIN="$RUNNER_TEMP/txntrace-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          echo "$IOS_DIST_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/dist.p12" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          # shellcheck disable=SC2046 # the existing keychains, split one to a word
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/dist.p12"
+
+          echo "$IOS_PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/txntrace.mobileprovision"
+          echo "PROVISIONING_PROFILE=$RUNNER_TEMP/txntrace.mobileprovision" >> "$GITHUB_ENV"
+
+          # The App Store Connect key uploads the build.
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" >> "$GITHUB_ENV"
+
+      - name: Build and Upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        # PROVISIONING_PROFILE and ASC_KEY_PATH come from the step above. The version is
+        # app/package.json's and the build number the minutes since 1970.
+        run: scripts/ios-release.sh
+
+      - name: Remove Signing Material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/txntrace-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/dist.p12" "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP/txntrace.mobileprovision"

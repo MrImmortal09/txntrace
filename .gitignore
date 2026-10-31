@@ -35,4 +35,5 @@ GoogleService-Info.plist
 *.aab
 *.apk
 *.xcarchive
+dist-ios/
 Payload/
