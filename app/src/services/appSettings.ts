@@ -13,3 +13,8 @@ export const setSetting = async (key: string, value: string): Promise<void> => {
     [key, value]
   );
 };
+
+export const deleteSettings = async (keys: string[]): Promise<void> => {
+  if (keys.length === 0) return;
+  await db.execute(`DELETE FROM app_settings WHERE key IN (${keys.map(() => '?').join(', ')})`, keys);
+};

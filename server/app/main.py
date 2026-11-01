@@ -45,9 +45,12 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Unauthorized")
     try:
         payload = jwt.decode(raw_token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("user_id")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload.get("user_id")
+    if not _account_exists(user_id):
+        raise HTTPException(status_code=401, detail="Account not found. Sign in again.")
+    return user_id
 
 def get_web_user(request: Request) -> str | None:
     token = request.cookies.get("txntrace_token")
@@ -55,9 +58,18 @@ def get_web_user(request: Request) -> str | None:
         return None
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("user_id")
-    except:
+    except jwt.InvalidTokenError:
         return None
+    user_id = payload.get("user_id")
+    return user_id if _account_exists(user_id) else None
+
+def _account_exists(user_id: str | None) -> bool:
+    # Tokens never expire, so without this a deleted account's token would
+    # keep working, and its next sync or backup would bring the data back.
+    if not user_id:
+        return False
+    with get_db() as conn:
+        return conn.execute("SELECT 1 FROM users WHERE id = %s", (user_id,)).fetchone() is not None
 
 OTP_STORE = {}
 
@@ -111,6 +123,12 @@ async def verify_otp(payload: dict):
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     return templates.TemplateResponse(request, "login.html")
+
+
+# Public, no sign-in: App Store Connect and the app's Settings screen link here.
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_page(request: Request):
+    return templates.TemplateResponse(request, "privacy.html")
 
 
 @app.on_event("startup")
@@ -627,6 +645,18 @@ async def api_clear_db(payload: dict[str, Any], user_id: str = Depends(get_curre
         conn.execute("DELETE FROM cards WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
     return {"cleared": True}
+
+
+@app.delete("/api/account")
+def api_delete_account(user_id: str = Depends(get_current_user)):
+    """The app's Delete Account button. Removes everything stored for the
+    user and then the user, all in one transaction. Unlike clear-db the
+    users row goes too, so the account's token stops working."""
+    with get_db() as conn:
+        for table in ("splits", "settlements", "contacts", "cards", "transactions"):
+            conn.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    return {"deleted": True}
 
 
 @app.get("/api/backup/status")
