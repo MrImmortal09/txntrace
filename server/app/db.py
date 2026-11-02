@@ -130,6 +130,36 @@ CREATE TABLE IF NOT EXISTS settlements (
 );
 """
 
+# A credit card's own records, kept on the phone: cashback or points credited
+# or redeemed, and the billed amount read off a statement. The server only
+# holds them for Backup and Restore; the website doesn't show them. Mirrors
+# the mobile app's tables of the same names.
+REWARD_ENTRIES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS reward_entries (
+    id TEXT PRIMARY KEY,
+    card_id TEXT,
+    kind TEXT,
+    cycle_key TEXT,
+    units REAL,
+    amount REAL,
+    note TEXT,
+    date TEXT,
+    created_at TEXT,
+    user_id TEXT
+);
+"""
+
+CARD_STATEMENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS card_statements (
+    id TEXT PRIMARY KEY,
+    card_id TEXT,
+    statement_date TEXT,
+    billed_amount REAL,
+    created_at TEXT,
+    user_id TEXT
+);
+"""
+
 
 @contextmanager
 def get_db():
@@ -154,6 +184,8 @@ def init_db() -> None:
         conn.execute(CONTACTS_SCHEMA)
         conn.execute(SPLITS_SCHEMA)
         conn.execute(SETTLEMENTS_SCHEMA)
+        conn.execute(REWARD_ENTRIES_SCHEMA)
+        conn.execute(CARD_STATEMENTS_SCHEMA)
         # Added after the initial table, so existing deployments need an
         # explicit migration rather than picking it up from CREATE TABLE IF
         # NOT EXISTS (a no-op once the table already exists). Lets an edit
@@ -190,3 +222,12 @@ def init_db() -> None:
         conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS longitude REAL")
         conn.execute("ALTER TABLE splits ADD COLUMN IF NOT EXISTS original_amount REAL")
         conn.execute("UPDATE splits SET original_amount = amount_owed WHERE original_amount IS NULL AND settled = 0")
+        # A card's statement and due days, reward program and where it was
+        # added, and the reward tier picked for a transaction, all set on the
+        # phone. Stored so a backup can bring them back on a new phone.
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS statement_day INTEGER")
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS due_day INTEGER")
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS reward_preset TEXT")
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS reward_program TEXT")
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS origin TEXT")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reward_tier TEXT")

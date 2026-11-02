@@ -37,6 +37,8 @@ const dbStore: Record<string, any[]> = {
   splits: [],
   settlements: [],
   cards: [],
+  reward_entries: [],
+  card_statements: [],
 };
 
 jest.mock('../src/db/schema', () => ({
@@ -56,6 +58,24 @@ jest.mock('../src/db/schema', () => ({
       }
       if (normalizedQ.startsWith('SELECT * FROM CARDS')) {
         return { rows: { _array: [...dbStore.cards] } };
+      }
+      if (normalizedQ.startsWith('SELECT * FROM REWARD_ENTRIES')) {
+        return { rows: { _array: [...dbStore.reward_entries] } };
+      }
+      if (normalizedQ.startsWith('SELECT * FROM CARD_STATEMENTS')) {
+        return { rows: { _array: [...dbStore.card_statements] } };
+      }
+      if (normalizedQ.startsWith('INSERT OR REPLACE INTO REWARD_ENTRIES')) {
+        const [id, card_id, kind, cycle_key, units, amount, note, date, created_at] = params;
+        dbStore.reward_entries = dbStore.reward_entries.filter(r => r.id !== id);
+        dbStore.reward_entries.push({ id, card_id, kind, cycle_key, units, amount, note, date, created_at });
+        return { rowsAffected: 1 };
+      }
+      if (normalizedQ.startsWith('INSERT OR REPLACE INTO CARD_STATEMENTS')) {
+        const [id, card_id, statement_date, billed_amount, created_at] = params;
+        dbStore.card_statements = dbStore.card_statements.filter(c => c.id !== id);
+        dbStore.card_statements.push({ id, card_id, statement_date, billed_amount, created_at });
+        return { rowsAffected: 1 };
       }
       if (normalizedQ.startsWith('DELETE FROM CARDS')) {
         // Mirrors syncCardsFromServer: only web-origin cards missing from the remote list are removed.
@@ -86,6 +106,7 @@ jest.mock('../src/db/schema', () => ({
           sms_body: params[16],
           needs_contact_match: params[17],
           card_id: params[18],
+          reward_tier: params[22],
         };
         if (existingIdx >= 0) {
           dbStore.transactions[existingIdx] = item;
@@ -144,14 +165,19 @@ jest.mock('../src/db/schema', () => ({
           is_credit_card: params[5],
           custom_pattern: params[6],
           created_at: params[7],
-          origin: 'web',
         };
+        // The phone-only columns, as of the last backup.
+        const settings = { statement_day: params[8], due_day: params[9], reward_preset: params[10], reward_program: params[11] };
         const existing = dbStore.cards.find(c => c.id === item.id);
         if (existing) {
-          // ON CONFLICT keeps the phone-only columns (origin, statement_day, reward_program).
-          Object.assign(existing, { ...item, origin: existing.origin });
+          // ON CONFLICT keeps origin, and the phone-only columns unless it's a Restore,
+          // which takes the server's where it has them.
+          Object.assign(existing, item);
+          if (normalizedQ.includes('STATEMENT_DAY = COALESCE(EXCLUDED.STATEMENT_DAY')) {
+            for (const [key, value] of Object.entries(settings)) if (value != null) existing[key] = value;
+          }
         } else {
-          dbStore.cards.push(item);
+          dbStore.cards.push({ ...item, ...settings, origin: params[12] ?? 'web' });
         }
         return { rowsAffected: 1 };
       }
@@ -172,6 +198,8 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
     dbStore.splits = [];
     dbStore.settlements = [];
     dbStore.cards = [];
+    dbStore.reward_entries = [];
+    dbStore.card_statements = [];
     await setAuthToken('test_jwt_token');
   });
 
@@ -270,6 +298,8 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
       date: '2026-09-12T13:00:00Z',
       created_at: '2026-09-12T13:00:00Z',
     });
+    dbStore.reward_entries.push({ id: 're_1', card_id: 'card_1', kind: 'received', cycle_key: '2026-09-05', units: 120, amount: 120 });
+    dbStore.card_statements.push({ id: 'card_1:2026-09-05', card_id: 'card_1', statement_date: '2026-09-05', billed_amount: 18450 });
 
     let uploadedPayload: any = null;
     (globalThis as any).fetch = jest.fn(async (url: string, opts: any) => {
@@ -306,6 +336,8 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
     expect(uploadedPayload.splits[0].id).toBe('sp_1');
     expect(uploadedPayload.settlements.length).toBe(1);
     expect(uploadedPayload.settlements[0].id).toBe('st_1');
+    expect(uploadedPayload.reward_entries).toEqual([expect.objectContaining({ id: 're_1', units: 120 })]);
+    expect(uploadedPayload.card_statements).toEqual([expect.objectContaining({ id: 'card_1:2026-09-05', billed_amount: 18450 })]);
   });
 
   it('restoreFromServer pulls all remote transactions, cards, splits, and settlements into local DB', async () => {
@@ -345,8 +377,22 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
                 credit_limit: 100000,
                 is_credit_card: 1,
                 created_at: '2026-09-10T00:00:00Z',
+                statement_day: 5,
+                due_day: 25,
+                reward_program: '{"kind":"cashback"}',
+                origin: 'app',
               },
             ],
+          }),
+        } as any;
+      }
+      if (url.endsWith('/api/card-history/export')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            reward_entries: [{ id: 're_1', card_id: 'card_1', kind: 'received', cycle_key: '2026-09-05', units: 120, amount: 120 }],
+            card_statements: [{ id: 'card_1:2026-09-05', card_id: 'card_1', statement_date: '2026-09-05', billed_amount: 18450 }],
           }),
         } as any;
       }
@@ -402,7 +448,14 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
     expect(result.settlements).toBe(1);
 
     expect(dbStore.transactions.some(t => t.id === 'tx_server_1')).toBe(true);
-    expect(dbStore.cards.some(c => c.id === 'card_1')).toBe(true);
+    expect(dbStore.cards.find(c => c.id === 'card_1')).toMatchObject({
+      statement_day: 5,
+      due_day: 25,
+      reward_program: '{"kind":"cashback"}',
+      origin: 'app',
+    });
+    expect(dbStore.reward_entries).toEqual([expect.objectContaining({ id: 're_1', units: 120 })]);
+    expect(dbStore.card_statements).toEqual([expect.objectContaining({ id: 'card_1:2026-09-05', billed_amount: 18450 })]);
     expect(dbStore.splits.some(s => s.id === 'split_server_1')).toBe(true);
     expect(dbStore.settlements.some(st => st.id === 'settle_server_1')).toBe(true);
   });
@@ -417,7 +470,10 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
       ok: true,
       status: 200,
       json: async () => ({
-        cards: [{ id: 'card_web', name: 'Renamed on web', bank: 'HDFC', last4: '1111', is_credit_card: 1, created_at: '' }],
+        cards: [
+          // An older backup's settings, which Sync mustn't put back
+          { id: 'card_web', name: 'Renamed on web', bank: 'HDFC', last4: '1111', is_credit_card: 1, created_at: '', statement_day: 20 },
+        ],
       }),
     }));
 
@@ -500,6 +556,9 @@ describe('Cloud Backup & Server Conflict Resolution', () => {
       }
       if (url.endsWith('/api/cards/export')) {
         return { ok: true, status: 200, json: async () => ({ cards: [] }) } as any;
+      }
+      if (url.endsWith('/api/card-history/export')) {
+        return { ok: true, status: 200, json: async () => ({ reward_entries: [], card_statements: [] }) } as any;
       }
       if (url.includes('/api/splits/export')) {
         return { ok: true, status: 200, json: async () => ({ splits: [] }) } as any;

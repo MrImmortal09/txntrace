@@ -227,6 +227,20 @@ def api_export_cards(user_id: str = Depends(get_current_user)):
     return {"cards": [dict(r) for r in rows]}
 
 
+@app.get("/api/card-history/export")
+def api_export_card_history(user_id: str = Depends(get_current_user)):
+    """For the app's Restore: the reward entries and statement amounts its
+    last backup sent. Only Restore pulls these, not Sync, so a stale backup
+    can't bring back an entry since deleted on the phone."""
+    with get_db() as conn:
+        rewards = conn.execute("SELECT * FROM reward_entries WHERE user_id = %s", (user_id,)).fetchall()
+        statements = conn.execute("SELECT * FROM card_statements WHERE user_id = %s", (user_id,)).fetchall()
+    return {
+        "reward_entries": [dict(r) for r in rewards],
+        "card_statements": [dict(r) for r in statements],
+    }
+
+
 @app.post("/api/cards")
 async def api_create_card(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
     name = (payload.get("name") or "").strip()
@@ -660,6 +674,8 @@ async def api_clear_db(payload: dict[str, Any], user_id: str = Depends(get_curre
         conn.execute("DELETE FROM settlements WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM contacts WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM cards WHERE user_id = %s", (user_id,))
+        conn.execute("DELETE FROM reward_entries WHERE user_id = %s", (user_id,))
+        conn.execute("DELETE FROM card_statements WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
     return {"cleared": True}
 
@@ -670,7 +686,7 @@ def api_delete_account(user_id: str = Depends(get_current_user)):
     user and then the user, all in one transaction. Unlike clear-db the
     users row goes too, so the account's token stops working."""
     with get_db() as conn:
-        for table in ("splits", "settlements", "contacts", "cards", "transactions"):
+        for table in ("splits", "settlements", "contacts", "cards", "reward_entries", "card_statements", "transactions"):
             conn.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
     return {"deleted": True}
@@ -721,6 +737,8 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
     settlements = payload.get("settlements") or []
     cards = payload.get("cards") or []
     contacts = payload.get("contacts") or []
+    reward_entries = payload.get("reward_entries") or []
+    card_statements = payload.get("card_statements") or []
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -734,6 +752,12 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                 cur.execute("DELETE FROM cards WHERE user_id = %s", (user_id,))
             if contacts:
                 cur.execute("DELETE FROM contacts WHERE user_id = %s", (user_id,))
+            # Apps from before these were backed up don't send the keys at all,
+            # and an overwrite from one of them must not wipe what a newer one sent.
+            if "reward_entries" in payload:
+                cur.execute("DELETE FROM reward_entries WHERE user_id = %s", (user_id,))
+            if "card_statements" in payload:
+                cur.execute("DELETE FROM card_statements WHERE user_id = %s", (user_id,))
 
         # 1. Insert/Upsert Transactions
         tx_records = [
@@ -760,6 +784,7 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                 t.get("location"),
                 t.get("latitude"),
                 t.get("longitude"),
+                t.get("reward_tier"),
                 user_id,
             )
             for t in transactions
@@ -770,8 +795,8 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                 """INSERT INTO transactions
                    (id, bank, amount, type, merchant_raw, date, source, category, note,
                     reviewed, created_at, updated_at, reference, account_last4, balance,
-                    sender, sms_body, card_id, needs_contact_match, location, latitude, longitude, user_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    sender, sms_body, card_id, needs_contact_match, location, latitude, longitude, reward_tier, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                      bank = EXCLUDED.bank,
                      amount = EXCLUDED.amount,
@@ -794,6 +819,7 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                      location = EXCLUDED.location,
                      latitude = EXCLUDED.latitude,
                      longitude = EXCLUDED.longitude,
+                     reward_tier = EXCLUDED.reward_tier,
                      user_id = EXCLUDED.user_id
                    WHERE transactions.user_id = EXCLUDED.user_id OR transactions.user_id IS NULL""",
                 tx_records,
@@ -887,6 +913,11 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                 1 if c.get("is_credit_card", True) else 0,
                 (c.get("custom_pattern") or "").strip() or None,
                 c.get("created_at") or now,
+                c.get("statement_day"),
+                c.get("due_day"),
+                c.get("reward_preset"),
+                c.get("reward_program"),
+                c.get("origin"),
                 user_id,
             )
             for c in cards
@@ -895,8 +926,9 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
         if card_records:
             cur.executemany(
                 """INSERT INTO cards
-                   (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at, user_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at,
+                    statement_day, due_day, reward_preset, reward_program, origin, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                      name = EXCLUDED.name,
                      bank = EXCLUDED.bank,
@@ -904,9 +936,77 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                      credit_limit = EXCLUDED.credit_limit,
                      is_credit_card = EXCLUDED.is_credit_card,
                      custom_pattern = EXCLUDED.custom_pattern,
+                     statement_day = EXCLUDED.statement_day,
+                     due_day = EXCLUDED.due_day,
+                     reward_preset = EXCLUDED.reward_preset,
+                     reward_program = EXCLUDED.reward_program,
+                     origin = EXCLUDED.origin,
                      user_id = EXCLUDED.user_id
                    WHERE cards.user_id = EXCLUDED.user_id OR cards.user_id IS NULL""",
                 card_records,
+            )
+
+        # 4b. A card's reward entries and statement amounts
+        reward_records = [
+            (
+                r["id"],
+                r.get("card_id"),
+                r.get("kind"),
+                r.get("cycle_key"),
+                r.get("units"),
+                r.get("amount"),
+                r.get("note"),
+                r.get("date"),
+                r.get("created_at") or now,
+                user_id,
+            )
+            for r in reward_entries
+            if isinstance(r, dict) and r.get("id")
+        ]
+        if reward_records:
+            cur.executemany(
+                """INSERT INTO reward_entries
+                   (id, card_id, kind, cycle_key, units, amount, note, date, created_at, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     card_id = EXCLUDED.card_id,
+                     kind = EXCLUDED.kind,
+                     cycle_key = EXCLUDED.cycle_key,
+                     units = EXCLUDED.units,
+                     amount = EXCLUDED.amount,
+                     note = EXCLUDED.note,
+                     date = EXCLUDED.date,
+                     created_at = EXCLUDED.created_at,
+                     user_id = EXCLUDED.user_id
+                   WHERE reward_entries.user_id = EXCLUDED.user_id""",
+                reward_records,
+            )
+
+        statement_records = [
+            (
+                cs["id"],
+                cs.get("card_id"),
+                cs.get("statement_date"),
+                cs.get("billed_amount"),
+                cs.get("created_at") or now,
+                user_id,
+            )
+            for cs in card_statements
+            if isinstance(cs, dict) and cs.get("id")
+        ]
+        if statement_records:
+            cur.executemany(
+                """INSERT INTO card_statements
+                   (id, card_id, statement_date, billed_amount, created_at, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     card_id = EXCLUDED.card_id,
+                     statement_date = EXCLUDED.statement_date,
+                     billed_amount = EXCLUDED.billed_amount,
+                     created_at = EXCLUDED.created_at,
+                     user_id = EXCLUDED.user_id
+                   WHERE card_statements.user_id = EXCLUDED.user_id""",
+                statement_records,
             )
 
         # 5. Insert/Upsert Contacts (if provided)
@@ -938,4 +1038,6 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
         "settlements_count": len(settlement_records),
         "cards_count": len(card_records),
         "contacts_count": len(contact_records),
+        "reward_entries_count": len(reward_records),
+        "card_statements_count": len(statement_records),
     }

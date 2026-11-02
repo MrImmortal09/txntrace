@@ -105,6 +105,7 @@ interface RemoteTransaction {
   location?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  reward_tier?: string | null;
 }
 
 /**
@@ -112,6 +113,8 @@ interface RemoteTransaction {
  * keyed by updated_at rather than created_at, so an edit to a row the phone already
  * has (e.g. a note added on the web) is picked up too, not just brand-new
  * rows. When fullPull is true, server rows unconditionally update local rows.
+ * The reward tier is set on the phone, so like a card's settings, only a new
+ * row or a Restore takes the server's.
  */
 export const syncFromServer = async (fullPull = false): Promise<{ imported: number }> => {
   const baseUrl = await getServerUrl();
@@ -133,8 +136,8 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
     const updatedAt = txn.updated_at || txn.created_at;
     const query = fullPull
       ? `INSERT INTO transactions
-          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude, reward_tier)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            bank = excluded.bank,
            amount = excluded.amount,
@@ -156,10 +159,11 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
            card_id = excluded.card_id,
            location = excluded.location,
            latitude = excluded.latitude,
-           longitude = excluded.longitude`
+           longitude = excluded.longitude,
+           reward_tier = COALESCE(excluded.reward_tier, transactions.reward_tier)`
       : `INSERT INTO transactions
-          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude, reward_tier)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            bank = excluded.bank,
            amount = excluded.amount,
@@ -206,6 +210,7 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
       txn.location ?? null,
       txn.latitude ?? null,
       txn.longitude ?? null,
+      txn.reward_tier ?? null,
     ]);
     imported += result.rowsAffected;
     if (!latestUpdatedAt || updatedAt > latestUpdatedAt) latestUpdatedAt = updatedAt;
@@ -224,17 +229,26 @@ interface RemoteCard {
   is_credit_card: number;
   custom_pattern: string | null;
   created_at: string;
+  statement_day?: number | null;
+  due_day?: number | null;
+  reward_preset?: string | null;
+  reward_program?: string | null;
+  origin?: string | null;
 }
 
 /**
  * Mirrors the server's registry rather than a "since" delta — the registry is
  * small and an edit on the web app (renamed card, changed limit) should take
- * effect on the next sync. Upserts instead of wiping the table, though: the
- * statement day and reward program are set on the phone and the server
- * doesn't store them, and cards added on the phone (origin 'app') must
- * survive a sync that doesn't know about them.
+ * effect on the next sync. Upserts instead of wiping the table, though: cards
+ * added on the phone (origin 'app') must survive a sync that doesn't know
+ * about them.
+ *
+ * The statement and due days and reward program are set on the phone, so the
+ * server only has them as of the last backup. A card new to this phone takes
+ * them; Sync leaves an existing card's alone, so an older backup never undoes
+ * a change; Restore (fullPull) takes the backup's.
  */
-export const syncCardsFromServer = async (): Promise<{ count: number }> => {
+export const syncCardsFromServer = async (fullPull = false): Promise<{ count: number }> => {
   const baseUrl = await getServerUrl();
   if (!baseUrl) throw new Error('No server URL configured.');
 
@@ -245,18 +259,40 @@ export const syncCardsFromServer = async (): Promise<{ count: number }> => {
   if (!Array.isArray(data.cards)) throw new Error('Malformed response from server: missing cards array.');
   const remote: RemoteCard[] = data.cards;
 
+  const restoreSettings = fullPull
+    ? `,
+         statement_day = COALESCE(excluded.statement_day, cards.statement_day),
+         due_day = COALESCE(excluded.due_day, cards.due_day),
+         reward_preset = COALESCE(excluded.reward_preset, cards.reward_preset),
+         reward_program = COALESCE(excluded.reward_program, cards.reward_program)`
+    : '';
   for (const card of remote) {
     await db.execute(
-      `INSERT INTO cards (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at, origin)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'web')
+      `INSERT INTO cards (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at,
+                          statement_day, due_day, reward_preset, reward_program, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'web'))
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          bank = excluded.bank,
          last4 = excluded.last4,
          credit_limit = excluded.credit_limit,
          is_credit_card = excluded.is_credit_card,
-         custom_pattern = excluded.custom_pattern`,
-      [card.id, card.name, card.bank, card.last4, card.credit_limit, card.is_credit_card, card.custom_pattern, card.created_at]
+         custom_pattern = excluded.custom_pattern${restoreSettings}`,
+      [
+        card.id,
+        card.name,
+        card.bank,
+        card.last4,
+        card.credit_limit,
+        card.is_credit_card,
+        card.custom_pattern,
+        card.created_at,
+        card.statement_day ?? null,
+        card.due_day ?? null,
+        card.reward_preset ?? null,
+        card.reward_program ?? null,
+        card.origin ?? null,
+      ]
     );
   }
 
@@ -542,6 +578,14 @@ export const backupLocalToServer = async (options: {
   const cardsRows: any = cardsRes.rows;
   const cards = cardsRows?._array || cardsRows || [];
 
+  // 5. A card's reward entries and statement amounts, which only Restore brings back
+  const rewardsRes = await db.execute('SELECT * FROM reward_entries');
+  const rewardsRows: any = rewardsRes.rows;
+  const rewardEntries = rewardsRows?._array || rewardsRows || [];
+  const statementsRes = await db.execute('SELECT * FROM card_statements');
+  const statementsRows: any = statementsRes.rows;
+  const cardStatements = statementsRows?._array || statementsRows || [];
+
   const headers = await getAuthHeaders();
   // The whole history goes up in one request, so it gets longer on a slow network.
   const res = await request(`${baseUrl}/api/backup/upload`, {
@@ -554,6 +598,8 @@ export const backupLocalToServer = async (options: {
       settlements,
       cards,
       contacts: options.contacts || [],
+      reward_entries: rewardEntries,
+      card_statements: cardStatements,
     }),
   }, 3 * REQUEST_TIMEOUT_MS);
 
@@ -591,8 +637,42 @@ export const backupLocalToServer = async (options: {
 };
 
 /**
+ * Restore only, never Sync: the reward entries and statement amounts the last
+ * backup sent. The server's copy is only as new as that backup, so Sync would
+ * bring back an entry deleted on the phone since. The backup's copy wins here.
+ */
+export const syncCardHistoryFromServer = async (): Promise<{ rewardEntries: number; cardStatements: number }> => {
+  const baseUrl = await getServerUrl();
+  if (!baseUrl) throw new Error('No server URL configured.');
+
+  const headers = await getAuthHeaders();
+  const res = await request(`${baseUrl}/api/card-history/export`, { headers });
+  if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+  const data = await res.json();
+  const rewardEntries: any[] = data.reward_entries || [];
+  const cardStatements: any[] = data.card_statements || [];
+
+  for (const r of rewardEntries) {
+    await db.execute(
+      `INSERT OR REPLACE INTO reward_entries (id, card_id, kind, cycle_key, units, amount, note, date, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [r.id, r.card_id, r.kind, r.cycle_key, r.units, r.amount, r.note, r.date, r.created_at]
+    );
+  }
+  for (const s of cardStatements) {
+    await db.execute(
+      `INSERT OR REPLACE INTO card_statements (id, card_id, statement_date, billed_amount, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [s.id, s.card_id, s.statement_date, s.billed_amount, s.created_at]
+    );
+  }
+  return { rewardEntries: rewardEntries.length, cardStatements: cardStatements.length };
+};
+
+/**
  * Performs a full pull/restore from the server: pulls all transactions,
- * cards, splits, and settlements into the local SQLite database.
+ * cards with their dues and rewards, splits, and settlements into the local
+ * SQLite database.
  */
 export const restoreFromServer = async (): Promise<{
   transactions: number;
@@ -601,7 +681,8 @@ export const restoreFromServer = async (): Promise<{
   settlements: number;
 }> => {
   const { imported: transactions } = await syncFromServer(true);
-  const { count: cards } = await syncCardsFromServer();
+  const { count: cards } = await syncCardsFromServer(true);
+  await syncCardHistoryFromServer();
   const { imported: splits } = await syncSplitsFromServer(true);
   const { imported: settlements } = await syncSettlementsFromServer(true);
 
