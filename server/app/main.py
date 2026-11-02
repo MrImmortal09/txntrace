@@ -284,24 +284,32 @@ def api_delete_card(card_id: str, user_id: str = Depends(get_current_user)):
 
 
 @app.post("/api/contacts/sync")
-async def api_sync_contacts(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
+def api_sync_contacts(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
     """Full-replace push from the phone — the only side with real device-
     contact access, mirroring how /api/cards/export is a full replace in the
     other direction. The web side never originates or edits a contact, so
     there's nothing to reconcile: whatever the phone last pushed just is
-    the current list."""
+    the current list.
+
+    A plain def, as are the other sync and backup endpoints: FastAPI runs
+    those on a thread pool, where an async def's blocking database calls
+    would hold the server's one event loop for the whole request. One
+    executemany, not an INSERT per contact, since each statement is a round
+    trip to Neon."""
     contacts = payload.get("contacts") or []
     now = datetime.now(timezone.utc).isoformat()
+    records = [
+        (c.get("id"), (c.get("name") or "").strip(), now, user_id)
+        for c in contacts
+        if c.get("id") and (c.get("name") or "").strip()
+    ]
     with get_db() as conn:
-        conn.execute("DELETE FROM contacts WHERE user_id = %s", (user_id,))
-        for c in contacts:
-            contact_id = c.get("id")
-            name = (c.get("name") or "").strip()
-            if not contact_id or not name:
-                continue
-            conn.execute(
+        cur = conn.cursor()
+        cur.execute("DELETE FROM contacts WHERE user_id = %s", (user_id,))
+        if records:
+            cur.executemany(
                 "INSERT INTO contacts (id, name, created_at, user_id) VALUES (%s, %s, %s, %s)",
-                (contact_id, name, now, user_id),
+                records,
             )
     return {"count": len(contacts)}
 
@@ -379,7 +387,7 @@ def api_export_splits(since: str | None = Query(default=None), user_id: str = De
 
 
 @app.post("/api/splits/sync")
-async def api_sync_splits_from_phone(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
+def api_sync_splits_from_phone(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
     """Push from the phone — the reverse direction of /api/splits/export.
     Splits can be authored on *either* side now (web via the endpoint
     above, phone via SMS-matching or a manual expense), so unlike contacts
@@ -389,9 +397,27 @@ async def api_sync_splits_from_phone(payload: dict[str, Any], user_id: str = Dep
     dropped from a partial payment, or it got fully settled) correctly
     updates it rather than erroring."""
     splits = payload.get("splits") or []
+    now = datetime.now(timezone.utc).isoformat()
+    records = [
+        (
+            s.get("id"),
+            s.get("transaction_id"),
+            s.get("contact_id"),
+            s.get("contact_name"),
+            s.get("amount_owed"),
+            s.get("original_amount"),
+            s.get("settled") or 0,
+            s.get("created_at") or now,
+            s.get("txn_date"),
+            s.get("txn_merchant"),
+            s.get("txn_amount"),
+            user_id,
+        )
+        for s in splits
+    ]
     with get_db() as conn:
-        for s in splits:
-            conn.execute(
+        if records:
+            conn.cursor().executemany(
                 """INSERT INTO splits
                    (id, transaction_id, contact_id, contact_name, amount_owed, original_amount, settled, created_at,
                     txn_date, txn_merchant, txn_amount, user_id)
@@ -400,52 +426,43 @@ async def api_sync_splits_from_phone(payload: dict[str, Any], user_id: str = Dep
                      amount_owed = EXCLUDED.amount_owed,
                      original_amount = COALESCE(EXCLUDED.original_amount, splits.original_amount),
                      settled = EXCLUDED.settled""",
-                (
-                    s.get("id"),
-                    s.get("transaction_id"),
-                    s.get("contact_id"),
-                    s.get("contact_name"),
-                    s.get("amount_owed"),
-                    s.get("original_amount"),
-                    s.get("settled") or 0,
-                    s.get("created_at") or datetime.now(timezone.utc).isoformat(),
-                    s.get("txn_date"),
-                    s.get("txn_merchant"),
-                    s.get("txn_amount"),
-                    user_id,
-                ),
+                records,
             )
     return {"count": len(splits)}
 
 
 @app.post("/api/settlements/sync")
-async def api_sync_settlements_from_phone(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
+def api_sync_settlements_from_phone(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
     """Push from the phone for the friend payment-history the web's Friends
     page shows alongside splits. A settlement is immutable once recorded —
     a payment either happened or it didn't — so ON CONFLICT DO NOTHING is
     enough; there's no field on it that a later push would ever need to
     revise."""
     entries = payload.get("settlements") or []
+    records = [
+        (
+            s.get("id"),
+            s.get("contact_id"),
+            s.get("contact_name"),
+            s.get("amount"),
+            s.get("unapplied_amount") or 0,
+            s.get("transaction_id"),
+            s.get("matched_split_id"),
+            s.get("date"),
+            s.get("created_at"),
+            user_id,
+        )
+        for s in entries
+    ]
     with get_db() as conn:
-        for s in entries:
-            conn.execute(
+        if records:
+            conn.cursor().executemany(
                 """INSERT INTO settlements
                    (id, contact_id, contact_name, amount, unapplied_amount, transaction_id, matched_split_id, date, created_at, user_id)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                      unapplied_amount = excluded.unapplied_amount""",
-                (
-                    s.get("id"),
-                    s.get("contact_id"),
-                    s.get("contact_name"),
-                    s.get("amount"),
-                    s.get("unapplied_amount") or 0,
-                    s.get("transaction_id"),
-                    s.get("matched_split_id"),
-                    s.get("date"),
-                    s.get("created_at"),
-                    user_id,
-                ),
+                records,
             )
     return {"count": len(entries)}
 
@@ -694,7 +711,7 @@ def api_backup_status(user_id: str = Depends(get_current_user)):
 
 
 @app.post("/api/backup/upload")
-async def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
+def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
     """Uploads a complete backup from the mobile client. If overwrite=True,
     clears the user's existing records on the server before writing the local
     data. If overwrite=False, performs upserts."""

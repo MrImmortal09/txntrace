@@ -161,7 +161,10 @@ const SettingsScreen = () => {
     
     setSyncing(true);
     try {
+      // A line per step, so a sync that stalls shows where.
+      log('Sync: pulling transactions…');
       const { imported } = await syncFromServer();
+      log('Sync: pulling cards…');
       const { count } = await syncCardsFromServer();
 
       // Contacts only push one way (phone -> server), and only if contacts
@@ -171,7 +174,9 @@ const SettingsScreen = () => {
       let contactsMsg = '';
       try {
         if (await hasContactsAccess()) {
-          const all = await Contacts.getAll();
+          log('Sync: pushing contacts…');
+          // Only names go up; getAll() would also save every contact's photo to disk.
+          const all = await Contacts.getAllWithoutPhotos();
           const payload = all.map(c => ({
             id: c.recordID,
             name: c.displayName || `${c.givenName} ${c.familyName}`.trim(),
@@ -186,8 +191,10 @@ const SettingsScreen = () => {
       // Pushed up before pulling down, so the web's Friends page reflects
       // splits/settlements from SMS-matching and the app's own manual-
       // expense flow, not just whatever was created directly on the web.
+      log('Sync: pushing splits and settlements…');
       const { count: splitsPushed } = await syncSplitsToServer();
       const { count: settlementsPushed } = await syncSettlementsToServer();
+      log('Sync: pulling splits and settlements…');
       const { imported: splitsImported } = await syncSplitsFromServer();
       const { imported: settlementsImported } = await syncSettlementsFromServer();
       log(
@@ -228,7 +235,7 @@ const SettingsScreen = () => {
       let contactsPayload: { id: string; name: string }[] = [];
       try {
         if (await hasContactsAccess()) {
-          const all = await Contacts.getAll();
+          const all = await Contacts.getAllWithoutPhotos();
           contactsPayload = all.map(c => ({
             id: c.recordID,
             name: c.displayName || `${c.givenName} ${c.familyName}`.trim(),

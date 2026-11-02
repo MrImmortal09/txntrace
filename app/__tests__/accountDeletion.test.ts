@@ -44,6 +44,7 @@ describe('Delete Account', () => {
     expect(fetchMock).toHaveBeenCalledWith('https://txn.axiosiiitl.dev/api/account', {
       method: 'DELETE',
       headers: { Authorization: 'Bearer test_jwt_token' },
+      signal: expect.any(AbortSignal),
     });
     expect(await getAuthToken()).toBeNull();
     // Sync positions go too, so the next sign-in pulls everything again

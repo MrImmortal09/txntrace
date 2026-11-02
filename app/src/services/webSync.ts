@@ -26,6 +26,27 @@ const getAuthHeaders = async () => {
   return { 'Authorization': `Bearer ${token}` };
 };
 
+// React Native's fetch never gives up by itself (iOS sends a timeout of 0), so
+// one stalled request would leave Sync or Backup spinning forever. Long enough
+// for a slow network; Cloudflare in front of the server answers 524 at 100s.
+const REQUEST_TIMEOUT_MS = 90_000;
+
+const request = async (url: string, init: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (controller.signal.aborted) {
+      const path = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
+      throw new Error(`The server didn't answer within ${timeoutMs / 1000}s (${path}). Check your connection and try again.`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const signOutOfWebSync = () =>
   deleteSettings([AUTH_TOKEN_KEY, LAST_SYNC_KEY, LAST_SPLITS_SYNC_KEY, LAST_SETTLEMENTS_SYNC_KEY]);
 
@@ -37,7 +58,7 @@ const signOutOfWebSync = () =>
 export const deleteServerAccount = async (): Promise<void> => {
   const baseUrl = await getServerUrl();
   const headers = await getAuthHeaders();
-  const res = await fetch(`${baseUrl}/api/account`, { method: 'DELETE', headers });
+  const res = await request(`${baseUrl}/api/account`, { method: 'DELETE', headers });
   if (res.status === 401) {
     // The token no longer proves who this is, so the account can't be
     // deleted with it. Signing in again gets a token that can.
@@ -100,7 +121,7 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
   const url = `${baseUrl}/api/transactions/export${since ? `?since=${encodeURIComponent(since)}` : ''}`;
   const headers = await getAuthHeaders();
 
-  const res = await fetch(url, { headers });
+  const res = await request(url, { headers });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   const remote: RemoteTransaction[] = data.transactions || [];
@@ -218,7 +239,7 @@ export const syncCardsFromServer = async (): Promise<{ count: number }> => {
   if (!baseUrl) throw new Error('No server URL configured.');
 
   const headers = await getAuthHeaders();
-  const res = await fetch(`${baseUrl}/api/cards/export`, { headers });
+  const res = await request(`${baseUrl}/api/cards/export`, { headers });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   if (!Array.isArray(data.cards)) throw new Error('Malformed response from server: missing cards array.');
@@ -268,7 +289,7 @@ export const syncContactsToServer = async (contacts: LocalContact[]): Promise<{ 
   if (!baseUrl) throw new Error('No server URL configured.');
 
   const headers = await getAuthHeaders();
-  const res = await fetch(`${baseUrl}/api/contacts/sync`, {
+  const res = await request(`${baseUrl}/api/contacts/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ contacts }),
@@ -302,7 +323,7 @@ export const syncSplitsFromServer = async (fullPull = false): Promise<{ imported
   const url = `${baseUrl}/api/splits/export${since ? `?since=${encodeURIComponent(since)}` : ''}`;
   const headers = await getAuthHeaders();
 
-  const res = await fetch(url, { headers });
+  const res = await request(url, { headers });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   const remote: RemoteSplit[] = data.splits || [];
@@ -358,7 +379,7 @@ export const syncSplitsToServer = async (): Promise<{ count: number }> => {
   if (splits.length === 0) return { count: 0 };
 
   const headers = await getAuthHeaders();
-  const result = await fetch(`${baseUrl}/api/splits/sync`, {
+  const result = await request(`${baseUrl}/api/splits/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ splits }),
@@ -391,7 +412,7 @@ export const syncSettlementsFromServer = async (fullPull = false): Promise<{ imp
   const url = `${baseUrl}/api/settlements/export${since ? `?since=${encodeURIComponent(since)}` : ''}`;
   const headers = await getAuthHeaders();
 
-  const res = await fetch(url, { headers });
+  const res = await request(url, { headers });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   const remote: RemoteSettlement[] = data.settlements || [];
@@ -447,7 +468,7 @@ export const syncSettlementsToServer = async (): Promise<{ count: number }> => {
   if (settlements.length === 0) return { count: 0 };
 
   const headers = await getAuthHeaders();
-  const result = await fetch(`${baseUrl}/api/settlements/sync`, {
+  const result = await request(`${baseUrl}/api/settlements/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ settlements }),
@@ -465,7 +486,7 @@ export const checkServerBackupStatus = async (): Promise<ServerBackupStatus> => 
   if (!baseUrl) throw new Error('No server URL configured.');
 
   const headers = await getAuthHeaders();
-  const res = await fetch(`${baseUrl}/api/backup/status`, { headers });
+  const res = await request(`${baseUrl}/api/backup/status`, { headers });
   if (!res.ok) throw new Error(`Failed to check server backup status: Server responded with ${res.status}`);
   const data = await res.json();
   return {
@@ -522,7 +543,8 @@ export const backupLocalToServer = async (options: {
   const cards = cardsRows?._array || cardsRows || [];
 
   const headers = await getAuthHeaders();
-  const res = await fetch(`${baseUrl}/api/backup/upload`, {
+  // The whole history goes up in one request, so it gets longer on a slow network.
+  const res = await request(`${baseUrl}/api/backup/upload`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({
@@ -533,7 +555,7 @@ export const backupLocalToServer = async (options: {
       cards,
       contacts: options.contacts || [],
     }),
-  });
+  }, 3 * REQUEST_TIMEOUT_MS);
 
   if (!res.ok) throw new Error(`Backup failed: Server responded with ${res.status}`);
   const data = await res.json();
