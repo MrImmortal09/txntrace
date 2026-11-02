@@ -28,6 +28,13 @@ ios *args:
 ios-install *args:
     cd {{mobile}} && npx react-native run-ios --mode Release --no-packager --device "$@"
 
+# App Store build, uploaded to App Store Connect (TestFlight). UPLOAD=0 keeps the .ipa in
+# dist-ios/. scripts/ios-release.sh lists its inputs.
+# PROVISIONING_PROFILE=~/Downloads/TxnTrace_App_Store.mobileprovision just ios-release
+[doc("App Store build, uploaded to App Store Connect (TestFlight)")]
+ios-release:
+    scripts/ios-release.sh
+
 # Reinstall CocoaPods after changing native dependencies
 pods:
     cd {{mobile}}/ios && bundle exec pod install

@@ -16,6 +16,8 @@ import {
   backupLocalToServer,
   restoreFromServer,
   getAuthToken,
+  deleteServerAccount,
+  PRIVACY_POLICY_URL,
 } from '../services/webSync';
 import { reparseStoredMessages } from '../services/reparseMessages';
 import { hasContactsAccess } from '../services/permissions';
@@ -25,6 +27,11 @@ import { OTPLoginModal } from '../components/OTPLoginModal';
 import { useShowTutorial } from '../components/onboarding/TutorialContext';
 import { useResetApp } from '../components/AppResetContext';
 import { APP_NAME, APP_NAME_FULL } from '../constants/appName';
+
+// The SMS filter extension isn't embedded in the app, so its setup steps stay
+// hidden until it ships again. App Review turns away a build whose instructions
+// point at something it doesn't have.
+const SHOW_SMS_FILTER_SETUP = false;
 
 // Subscribes on its own so download progress doesn't re-render the whole screen
 const UpdateStatusHint = () => {
@@ -50,14 +57,20 @@ const SettingsScreen = () => {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<'sync' | 'backup' | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const showTutorial = useShowTutorial();
   const resetApp = useResetApp();
 
   useEffect(() => {
-    // No need to load serverUrl anymore
+    getAuthToken().then(token => setSignedIn(!!token)).catch(() => {});
   }, []);
 
-
+  const openPrivacyPolicy = () => {
+    Linking.openURL(PRIVACY_POLICY_URL).catch(() => {
+      log(`Could not open the privacy policy. It's at ${PRIVACY_POLICY_URL}`);
+    });
+  };
 
   const openShortcuts = () => {
     Linking.openURL('shortcuts://').catch(() => {
@@ -316,6 +329,36 @@ const SettingsScreen = () => {
     );
   };
 
+  const deleteAccount = async () => {
+    setDeletingAccount(true);
+    try {
+      await deleteServerAccount();
+      setSignedIn(false);
+      Alert.alert('Account deleted', 'Your account and everything on the server for it are gone.');
+      log('Account deleted ✅');
+    } catch (e: any) {
+      // A rejected sign-in is cleared even though nothing was deleted
+      setSignedIn(!!(await getAuthToken().catch(() => null)));
+      Alert.alert('Delete failed', e.message || 'Nothing was deleted.');
+      log(`Delete account FAILED ❌: ${e.message}`);
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
+  const confirmDeleteAccount = () => {
+    Alert.alert(
+      'Delete account?',
+      'Your account and everything stored on the server for it will be deleted: transactions with their SMS text, ' +
+        'cards, contact names, splits and settlements. You’ll be signed out here and on the website.\n\n' +
+        'Data on this phone stays. To remove it too, use Reset App. This can’t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete Account', style: 'destructive', onPress: deleteAccount },
+      ]
+    );
+  };
+
   const runReparse = async () => {
     setReparsing(true);
     log('--- Re-parsing stored messages ---');
@@ -384,12 +427,12 @@ const SettingsScreen = () => {
       {Platform.OS === 'ios' && (
         <>
           <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>1. Shortcuts automation</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Shortcuts automation</Text>
             <Text style={[styles.hint, { color: colors.textSecondary }]}>The main way {APP_NAME} sees your bank SMS</Text>
             <Text style={[styles.description, { color: colors.textSecondary }]}>
               iOS has no API for reading messages directly, so you hand them to {APP_NAME_FULL} with a
-              one-time automation. It runs in the background — nothing opens, nothing
-              is sent anywhere.
+              one-time automation. It runs in the background and nothing opens. Messages
+              stay on this phone unless you turn on Cloud Backup & Sync.
             </Text>
 
             <View style={[styles.instructions, { backgroundColor: colors.background, borderColor: colors.border }]}>
@@ -416,30 +459,32 @@ const SettingsScreen = () => {
             </TouchableOpacity>
           </View>
 
-          <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>2. Message filter (backup)</Text>
-            <Text style={[styles.hint, { color: colors.textSecondary }]}>Optional — kept for the upcoming server-side path</Text>
-            <Text style={[styles.description, { color: colors.textSecondary }]}>
-              The filter extension sits in the message delivery path, so it misses less
-              than an automation.
-            </Text>
-
-            <View style={[styles.instructions, { backgroundColor: colors.background, borderColor: colors.border }]}>
-              <Text style={[styles.instructionsText, { color: colors.textSecondary }]}>
-                1. Open the Settings app{'\n'}
-                2. Go to Messages{'\n'}
-                3. Tap on Unknown & Spam{'\n'}
-                4. Enable TxnTraceSMSFilter under SMS Filtering
+          {SHOW_SMS_FILTER_SETUP && (
+            <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Message filter (backup)</Text>
+              <Text style={[styles.hint, { color: colors.textSecondary }]}>Optional — kept for the upcoming server-side path</Text>
+              <Text style={[styles.description, { color: colors.textSecondary }]}>
+                The filter extension sits in the message delivery path, so it misses less
+                than an automation.
               </Text>
-            </View>
 
-            <TouchableOpacity
-              style={[styles.button, styles.buttonSecondary, { borderColor: colors.border }]}
-              onPress={openMessagesSettings}
-            >
-              <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Open Messages Settings</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={[styles.instructions, { backgroundColor: colors.background, borderColor: colors.border }]}>
+                <Text style={[styles.instructionsText, { color: colors.textSecondary }]}>
+                  1. Open the Settings app{'\n'}
+                  2. Go to Messages{'\n'}
+                  3. Tap on Unknown & Spam{'\n'}
+                  4. Enable TxnTraceSMSFilter under SMS Filtering
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.button, styles.buttonSecondary, { borderColor: colors.border }]}
+                onPress={openMessagesSettings}
+              >
+                <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Open Messages Settings</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </>
       )}
 
@@ -453,7 +498,7 @@ const SettingsScreen = () => {
         <TouchableOpacity
           style={[styles.button, { backgroundColor: colors.primary }]}
           onPress={handleBackup}
-          disabled={backingUp || restoring || syncing}
+          disabled={backingUp || restoring || syncing || deletingAccount}
         >
           <Text style={styles.buttonText}>
             {restoring ? 'Restoring…' : backingUp ? 'Backing up…' : 'Backup to Server'}
@@ -462,9 +507,33 @@ const SettingsScreen = () => {
         <TouchableOpacity
           style={[styles.button, styles.buttonSecondary, { borderColor: colors.border, marginTop: 10 }]}
           onPress={handleSync}
-          disabled={backingUp || restoring || syncing}
+          disabled={backingUp || restoring || syncing || deletingAccount}
         >
           <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>{syncing ? 'Syncing…' : 'Sync with Web'}</Text>
+        </TouchableOpacity>
+        {signedIn && (
+          <TouchableOpacity
+            style={[styles.button, styles.buttonSecondary, { borderColor: colors.danger, marginTop: 10 }]}
+            onPress={confirmDeleteAccount}
+            disabled={backingUp || restoring || syncing || deletingAccount}
+          >
+            <Text style={[styles.buttonSecondaryText, { color: colors.danger }]}>
+              {deletingAccount ? 'Deleting…' : 'Delete Account'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={[styles.card, styles.cardSpacing, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Privacy</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>
+          What {APP_NAME} keeps on your phone, what it stores on the server once you sign in, and how to delete it
+        </Text>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary, { borderColor: colors.border }]}
+          onPress={openPrivacyPolicy}
+        >
+          <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Privacy Policy</Text>
         </TouchableOpacity>
       </View>
 
@@ -476,6 +545,7 @@ const SettingsScreen = () => {
         }}
         onSuccess={() => {
           setShowLoginModal(false);
+          setSignedIn(true);
           if (pendingAction === 'backup') {
             setPendingAction(null);
             handleBackup();
