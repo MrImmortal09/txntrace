@@ -58,8 +58,28 @@ How the signing works:
 
 - **Only the app target is signed.** Its Release configuration reads `TXNTRACE_CODE_SIGN_STYLE`, `TXNTRACE_CODE_SIGN_IDENTITY`, `TXNTRACE_PROVISIONING_PROFILE`, `TXNTRACE_BUNDLE_ID` and `TXNTRACE_TEAM_ID`. Each falls back to what the project had before, so Xcode and `just ios-install` work as they did. The script sets them on the command line. Plain `CODE_SIGN_STYLE` and the rest would reach every CocoaPods target as well, and the privacy bundles inside the app would all get the app's bundle ID, which App Store Connect turns away.
 - **The App Group is swapped for the build.** The Shortcuts intent hands messages to the app through the App Group's shared container. The checked-in group belongs to the ad-hoc signing team, so the script writes the profile's group into the entitlements and the Swift files that name it, and puts the files back afterwards.
-- **The SMS filter extension isn't in the build.** It isn't embedded in the app today. If it is embedded again, it needs its own App ID under the app's bundle ID, with the App Group, and a second profile.
+- **The SMS filter extension isn't in the build.** It isn't embedded in the app today. If it is embedded again, it needs its own App ID under the app's bundle ID, with the App Group, and a second profile. Its setup steps in Settings are hidden behind `SHOW_SMS_FILTER_SETUP` in [SettingsScreen.tsx](../app/src/screens/SettingsScreen.tsx); turn that on in the same change.
 - **The runner uses Xcode 26.6** (`XCODE` in the workflow). App Store Connect has taken only builds made with Xcode 26 or later since 28 April 2026.
+
+### Before sending a build for App Review
+
+TestFlight doesn't need any of this. App Review does. In App Store Connect:
+
+- **Privacy Policy URL:** `https://txn.axiosiiitl.dev/privacy`. The server serves it from [privacy.html](../server/app/templates/privacy.html), and the app links to it from Settings → Privacy and from the sign-in screen. When what the app collects changes, update the page, the privacy manifest and the answers below together.
+- **App Privacy:** answer that the app collects data, with the same types as [PrivacyInfo.xcprivacy](../app/ios/TxnTrace/PrivacyInfo.xcprivacy). Each one is linked to the user, not used for tracking, and used for App Functionality only.
+
+  | Data type | What it is in TxnTrace |
+  | --- | --- |
+  | Phone Number | The sign-in |
+  | Other Financial Info | Transactions, balances and cards |
+  | Emails or Text Messages | The SMS text of each transaction |
+  | Contacts | Contact names, pushed up on sync |
+  | Precise Location | A transaction's location, when the Shortcuts automation passes one |
+  | Other User Content | Notes, splits and settlements |
+
+  All of it leaves the phone only after the user signs in to Cloud Backup & Sync, but Apple counts it as collected all the same.
+- **Account deletion:** Settings → Cloud Backup & Sync → **Delete Account** shows once signed in. It calls `DELETE /api/account`, which deletes the account and everything stored for it, and the account's token stops working.
+- **Sign-in for the reviewer:** there is no demo account yet. The sign-in code is random and goes over WhatsApp to an Indian mobile number, which a reviewer can't receive. Say in the App Review notes that signing in is optional and only needed for Cloud Backup & Sync. If Apple asks for an account anyway, the server needs a fixed number and code for review first.
 
 ## Update priority
 

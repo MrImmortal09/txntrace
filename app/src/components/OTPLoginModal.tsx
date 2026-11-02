@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, ActivityIndicator } from 'react-native';
-import { getServerUrl, setAuthToken } from '../services/webSync';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, Linking } from 'react-native';
+import { getServerUrl, setAuthToken, PRIVACY_POLICY_URL } from '../services/webSync';
 import { useTheme } from '../theme/ThemeProvider';
+import { APP_NAME } from '../constants/appName';
 
 interface Props {
   visible: boolean;
@@ -93,6 +94,19 @@ export const OTPLoginModal = ({ visible, onClose, onSuccess }: Props) => {
               : `Enter the OTP sent via WhatsApp to ${phone}`}
           </Text>
 
+          {step === 'phone' ? (
+            <Text style={[styles.notice, { color: colors.textSecondary }]}>
+              Once you sign in, what you back up or sync is stored on the {APP_NAME} server. You can delete it
+              any time with Delete Account in Settings.{' '}
+              <Text
+                style={{ color: colors.primary }}
+                onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => {})}
+              >
+                Privacy Policy
+              </Text>
+            </Text>
+          ) : null}
+
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           {step === 'phone' ? (
@@ -165,6 +179,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 20,
     lineHeight: 20,
+  },
+  notice: {
+    fontSize: 13,
+    marginTop: -8,
+    marginBottom: 20,
+    lineHeight: 18,
   },
   error: {
     color: '#ff3b30',

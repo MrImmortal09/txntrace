@@ -1,11 +1,14 @@
 import { SERVER_URL as SERVER_URL_DEFAULT } from '@env';
 import { db } from '../db/schema';
-import { getSetting, setSetting } from './appSettings';
+import { deleteSettings, getSetting, setSetting } from './appSettings';
 
 const LAST_SYNC_KEY = 'web_sync_last_created_at';
 const LAST_SPLITS_SYNC_KEY = 'web_sync_last_split_created_at';
 const LAST_SETTLEMENTS_SYNC_KEY = 'web_sync_last_settlement_created_at';
 const AUTH_TOKEN_KEY = 'web_sync_auth_token';
+
+/** Served by the server's /privacy route. App Store Connect links to it too. */
+export const PRIVACY_POLICY_URL = 'https://txn.axiosiiitl.dev/privacy';
 
 export const getServerUrl = async (): Promise<string> => {
   return 'https://txn.axiosiiitl.dev';
@@ -21,6 +24,31 @@ const getAuthHeaders = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not authenticated. Please login first.');
   return { 'Authorization': `Bearer ${token}` };
+};
+
+const signOutOfWebSync = () =>
+  deleteSettings([AUTH_TOKEN_KEY, LAST_SYNC_KEY, LAST_SPLITS_SYNC_KEY, LAST_SETTLEMENTS_SYNC_KEY]);
+
+/**
+ * Settings → Delete Account. The server deletes the account and everything it
+ * holds for it, and this phone is signed out of web sync, sync positions
+ * included, so a later sign-in starts from scratch. Data on the phone stays.
+ */
+export const deleteServerAccount = async (): Promise<void> => {
+  const baseUrl = await getServerUrl();
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${baseUrl}/api/account`, { method: 'DELETE', headers });
+  if (res.status === 401) {
+    // The token no longer proves who this is, so the account can't be
+    // deleted with it. Signing in again gets a token that can.
+    await signOutOfWebSync();
+    throw new Error('Your sign-in has expired. Sign in again, then delete your account.');
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Server responded with ${res.status}`);
+  }
+  await signOutOfWebSync();
 };
 
 export interface ServerBackupStatus {
