@@ -1,6 +1,6 @@
 import { db } from '../db/schema';
 import { getSetting, setSetting } from './appSettings';
-import { applyCardForexMarkup } from './exchangeRates';
+import { repriceForeignSpends } from './exchangeRates';
 import { Card, matchCard } from './cardMatching';
 import {
   buildCardOverview,
@@ -75,7 +75,11 @@ export const rematchCardTransactions = async (resetCardId?: string): Promise<num
     await db.execute('UPDATE transactions SET card_id = NULL WHERE card_id = ?', [resetCardId]);
   }
   const cards: Card[] = rowsOf(await db.execute('SELECT * FROM cards'));
-  if (cards.length === 0) return 0;
+  if (cards.length === 0) {
+    // The last card just went: its foreign spends lose its markup.
+    await repriceForeignSpends();
+    return 0;
+  }
 
   const pending = rowsOf(
     await db.execute('SELECT id, sender, sms_body FROM transactions WHERE card_id IS NULL AND sms_body IS NOT NULL')
@@ -90,6 +94,9 @@ export const rematchCardTransactions = async (resetCardId?: string): Promise<num
       matched++;
     }
   }
+  // A spend linked just now, or a card whose markup just changed, needs its
+  // foreign spends priced with that card's markup.
+  await repriceForeignSpends();
   return matched;
 };
 
@@ -130,8 +137,6 @@ export const saveCreditCard = async (input: CreditCardInput): Promise<string> =>
       ]
     );
     await safeRematch(input.id);
-    // After the rematch, so spends it just linked get this card's markup too.
-    await applyCardForexMarkup(input.id, input.forex_markup);
     return input.id;
   }
 
@@ -155,7 +160,6 @@ export const saveCreditCard = async (input: CreditCardInput): Promise<string> =>
     ]
   );
   await safeRematch();
-  await applyCardForexMarkup(id, input.forex_markup);
   return id;
 };
 
@@ -222,10 +226,6 @@ export const getCardOverview = async (card: CreditCard): Promise<CardOverview | 
 };
 
 /** Pass null to go back to the card's default / keyword-matched tier. */
-/** The whole stored row, for the transaction detail sheet. */
-export const loadTransaction = async (id: string): Promise<any | null> =>
-  rowsOf(await db.execute('SELECT * FROM transactions WHERE id = ?', [id]))[0] ?? null;
-
 export const setTransactionRewardTier = async (txnId: string, tierId: string | null): Promise<void> => {
   // updated_at is deliberately left alone — the tier is phone-only and
   // bumping it would make web sync treat this row as locally edited.

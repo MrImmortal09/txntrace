@@ -184,7 +184,9 @@ CREATE TABLE IF NOT EXISTS parse_reports (
     app_version TEXT,
     platform TEXT,
     status TEXT DEFAULT 'open',
-    created_at TEXT
+    created_at TEXT,
+    parsed_currency TEXT,
+    parsed_original_amount REAL
 );
 """
 
@@ -280,3 +282,6 @@ def init_db() -> None:
         conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fx_rate REAL")
         conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fx_markup REAL")
         conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS forex_markup REAL")
+        # The foreign amount the app read, for a reported spend in another currency.
+        conn.execute("ALTER TABLE parse_reports ADD COLUMN IF NOT EXISTS parsed_currency TEXT")
+        conn.execute("ALTER TABLE parse_reports ADD COLUMN IF NOT EXISTS parsed_original_amount REAL")

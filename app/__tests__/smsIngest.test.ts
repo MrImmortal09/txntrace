@@ -294,6 +294,15 @@ describe('SMS Ingestion and Batch Processing', () => {
       currency: 'INR',
     });
     expect(extractTransactionAmount('EUR1,250.50 spent at HOTEL ROMA')).toEqual({ amount: 1250.5, currency: 'EUR' });
+    // Words ending in "rs" aren't rupee amounts.
+    expect(
+      extractTransactionAmount('Dear Cardmembers, USD 10.00 spent on your card XX1234 at AMAZON at 14:05 Hrs, Avl Lmt INR 5000.00')
+    ).toEqual({ amount: 10, currency: 'USD' });
+    // The bank's own conversion beats an estimate.
+    expect(extractTransactionAmount('Transaction of USD 100.00 (INR 8,400.00) on your SBI Card ending 1234')).toEqual({
+      amount: 8400,
+      currency: 'INR',
+    });
   });
 
   it('prices a foreign spend at the rate plus the card markup', () => {

@@ -32,12 +32,19 @@ export const FOREIGN_CURRENCIES = [
 // lower-case "try 2" in a message isn't Turkish lira.
 const FOREIGN_AMOUNT_PATTERN = new RegExp(`\\b(${FOREIGN_CURRENCIES.join('|')})\\s?\\.?\\s*(\\d[\\d,]*(?:\\.\\d+)?)`);
 
+// Where a rupee amount starts. Stricter than AmountPatterns on purpose: those
+// are unanchored, so "Dear Cardmembers," or "14:05 Hrs," would count as a
+// rupee amount sitting before the foreign one. Here "Rs" must start a word
+// and be followed by a digit.
+const RUPEE_AMOUNT_STARTS = [/\bRs\.?\s*\d/i, /\bINR\s*\d/i, /₹\s*\d/];
+
 const firstRupeeIndex = (message: string): number => {
-  const positions = Object.values(AmountPatterns)
-    .map(pattern => message.search(pattern))
-    .filter(i => i >= 0);
+  const positions = RUPEE_AMOUNT_STARTS.map(pattern => message.search(pattern)).filter(i => i >= 0);
   return positions.length ? Math.min(...positions) : -1;
 };
+
+// "USD 100.00 (INR 8,400.00)": the bank's own rupee figure, right after the foreign one.
+const BRACKETED_RUPEES = /^\s*\(\s*(?:Rs\.?|INR|₹)\s*(\d[\d,]*(?:\.\d+)?)\s*\)/i;
 
 /**
  * The amount the transaction was made in, and its currency.
@@ -47,11 +54,15 @@ const firstRupeeIndex = (message: string): number => {
  * the available limit. Banks put the spend before the balance or limit, so a
  * foreign amount that comes before every rupee amount is the spend; one that
  * comes after ("INR 8,312.00 (USD 100.00) spent") is only for information and
- * the rupee figure is what was billed.
+ * the rupee figure is what was billed. So is one in brackets right after the
+ * foreign amount ("USD 100.00 (INR 8,400.00)"): the bank already converted it,
+ * which beats an estimate from the day's rate.
  */
 export const extractTransactionAmount = (message: string): { amount: number; currency: string } | null => {
   const foreign = message.match(FOREIGN_AMOUNT_PATTERN);
   if (foreign && foreign.index !== undefined) {
+    const billed = message.slice(foreign.index + foreign[0].length).match(BRACKETED_RUPEES);
+    if (billed) return { amount: parseFloat(billed[1].replace(/,/g, '')), currency: 'INR' };
     const rupeeAt = firstRupeeIndex(message);
     const amount = parseFloat(foreign[2].replace(/,/g, ''));
     if (!isNaN(amount) && (rupeeAt === -1 || foreign.index < rupeeAt)) {

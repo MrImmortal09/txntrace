@@ -71,7 +71,17 @@ export interface ParseReport {
   transactionId: string;
   sender: string | null;
   smsBody: string;
-  parsed: { bank: string | null; amount: number; type: string; merchant: string | null; date: string };
+  parsed: {
+    bank: string | null;
+    /** ₹, as stored. */
+    amount: number;
+    type: string;
+    merchant: string | null;
+    date: string;
+    /** What the message gave, for a spend in another currency. */
+    currency: string;
+    original_amount: number | null;
+  };
   reason: ParseReportReason;
   note: string | null;
 }
@@ -226,10 +236,12 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
            latitude = excluded.latitude,
            longitude = excluded.longitude,
            reward_tier = COALESCE(excluded.reward_tier, transactions.reward_tier),
-           original_currency = COALESCE(excluded.original_currency, transactions.original_currency),
-           original_amount = COALESCE(excluded.original_amount, transactions.original_amount),
-           fx_rate = COALESCE(excluded.fx_rate, transactions.fx_rate),
-           fx_markup = COALESCE(excluded.fx_markup, transactions.fx_markup)`
+           -- Always from the same copy as amount: mixing the server's amount with
+           -- the phone's rate leaves a spend priced at neither.
+           original_currency = excluded.original_currency,
+           original_amount = excluded.original_amount,
+           fx_rate = excluded.fx_rate,
+           fx_markup = excluded.fx_markup`
       : `INSERT INTO transactions
           (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude, reward_tier,
            original_currency, original_amount, fx_rate, fx_markup)
@@ -255,10 +267,12 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
            location = excluded.location,
            latitude = excluded.latitude,
            longitude = excluded.longitude,
-           original_currency = COALESCE(excluded.original_currency, transactions.original_currency),
-           original_amount = COALESCE(excluded.original_amount, transactions.original_amount),
-           fx_rate = COALESCE(excluded.fx_rate, transactions.fx_rate),
-           fx_markup = COALESCE(excluded.fx_markup, transactions.fx_markup)
+           -- Always from the same copy as amount: mixing the server's amount with
+           -- the phone's rate leaves a spend priced at neither.
+           original_currency = excluded.original_currency,
+           original_amount = excluded.original_amount,
+           fx_rate = excluded.fx_rate,
+           fx_markup = excluded.fx_markup
          WHERE excluded.updated_at > COALESCE(transactions.updated_at, transactions.created_at, '')`;
 
     const result = await db.execute(query, [

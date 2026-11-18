@@ -352,9 +352,6 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
     const cardRows: any = cardsRes.rows;
     const cards: Card[] = cardRows?._array || cardRows || [];
     const card = matchCard(cards, effectiveSender, body) || matchCard(cards, effectiveSender, normalizedBody);
-    const rates = parsed.currency && parsed.currency !== 'INR' ? await getExchangeRates() : {};
-    const price = priceInRupees(parsed.amount, parsed.currency, rates, card?.forex_markup);
-    parsed = { ...parsed, amount: price.amount };
 
     // Check if already exists in transactions
     const existingRes = await db.execute(
@@ -378,6 +375,11 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
         },
       };
     }
+
+    // After the duplicate check: a re-pasted message shouldn't wait on the network.
+    const rates = parsed.currency && parsed.currency !== 'INR' ? await getExchangeRates() : {};
+    const price = priceInRupees(parsed.amount, parsed.currency, rates, card?.forex_markup);
+    parsed = { ...parsed, amount: price.amount };
 
     const insertResult = await db.execute(
       `INSERT OR IGNORE INTO transactions

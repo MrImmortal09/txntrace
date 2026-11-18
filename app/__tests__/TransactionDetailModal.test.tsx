@@ -298,7 +298,15 @@ describe('TransactionDetailModal parse report', () => {
       transactionId: 'sms_due',
       sender: 'AX-ICICIT',
       smsBody: dueReminder.sms_body,
-      parsed: { bank: 'ICICI Bank', amount: 36483, type: 'debit', merchant: 'Unknown ICICI Merchant', date: dueReminder.date },
+      parsed: {
+        bank: 'ICICI Bank',
+        amount: 36483,
+        type: 'debit',
+        merchant: 'Unknown ICICI Merchant',
+        date: dueReminder.date,
+        currency: 'INR',
+        original_amount: null,
+      },
       reason: 'not_transaction',
       note: null,
     });

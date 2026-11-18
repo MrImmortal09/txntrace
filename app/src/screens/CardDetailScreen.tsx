@@ -6,6 +6,7 @@ import CardEditModal from '../components/CardEditModal';
 import AmountPromptModal from '../components/AmountPromptModal';
 import RewardTierPicker from '../components/RewardTierPicker';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
+import { loadTransaction } from '../services/transactionEdits';
 import {
   CreditCard,
   addRewardEntry,
@@ -13,7 +14,6 @@ import {
   getCardOverview,
   getCreditCard,
   loadRewardEntries,
-  loadTransaction,
   setReceivedReward,
   setStatementAmount,
   setTransactionRewardTier,
@@ -394,15 +394,16 @@ const CardDetailScreen = () => {
                   const capped = reward && reward.units < reward.uncappedUnits;
                   const split = tier && program && reward ? formatAcceleratedSplit(program, tier, reward) : null;
                   return (
-                    <TouchableOpacity
-                      key={txn.id}
-                      style={[styles.txn, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                      activeOpacity={0.7}
-                      onPress={() => openTxn(txn.id)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${txn.merchant_raw || 'Transaction'}, ${formatRupees(txn.amount, 2)}. Tap for the message and reward tier.`}
-                    >
-                      <View style={styles.txnTop}>
+                    <View key={txn.id} style={[styles.txn, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      {/* Only this line opens the sheet. Wrapping the whole row would
+                          merge the tier chip into it for VoiceOver, out of reach. */}
+                      <TouchableOpacity
+                        style={styles.txnTop}
+                        activeOpacity={0.7}
+                        onPress={() => openTxn(txn.id)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${txn.merchant_raw || 'Transaction'}, ${formatRupees(txn.amount, 2)}. Opens the message and reward tier.`}
+                      >
                         <View style={styles.txnMain}>
                           <Text style={[styles.txnMerchant, { color: colors.text }]} numberOfLines={1}>
                             {txn.merchant_raw || (isDebit ? 'Spend' : 'Credit')}
@@ -416,7 +417,7 @@ const CardDetailScreen = () => {
                           {isDebit ? '' : '+'}
                           {formatRupees(txn.amount, 2)}
                         </Text>
-                      </View>
+                      </TouchableOpacity>
                       {tier && program ? (
                         <TouchableOpacity
                           style={[styles.tierChip, { borderColor: txn.reward_tier ? colors.primary : colors.border }]}
@@ -433,7 +434,7 @@ const CardDetailScreen = () => {
                         </TouchableOpacity>
                       ) : null}
                       {split ? <Text style={[styles.splitText, { color: colors.success }]}>{split}</Text> : null}
-                    </TouchableOpacity>
+                    </View>
                   );
                 })}
               </>

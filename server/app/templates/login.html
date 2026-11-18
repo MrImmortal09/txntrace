@@ -94,10 +94,17 @@
         
         const data = await res.json();
         document.cookie = `txntrace_token=${data.token}; path=/; max-age=31536000; SameSite=Lax`;
-        // Back to the page that sent you here. Same-site paths only, so the
-        // link can't bounce someone off to another site after they sign in.
-        const next = new URLSearchParams(window.location.search).get("next") || "";
-        window.location.href = /^\/(?![\/\\])/.test(next) ? next : "/";
+        // Back to the page that sent you here, but only on this site. Resolved
+        // the way the browser will resolve it, since a pattern check on the raw
+        // text misses tricks like "/\t/evil.com", which browsers turn into "//evil.com".
+        window.location.href = (() => {
+          try {
+            const next = new URL(new URLSearchParams(window.location.search).get("next") || "/", window.location.origin);
+            return next.origin === window.location.origin ? next.pathname + next.search + next.hash : "/";
+          } catch {
+            return "/";
+          }
+        })();
       } catch (err) {
         showError(err.message);
         btn.disabled = false;

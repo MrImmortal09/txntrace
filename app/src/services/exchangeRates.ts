@@ -48,9 +48,12 @@ export const getExchangeRates = async (): Promise<Rates> => {
 
   try {
     const fresh = await fetchExchangeRates(8_000);
-    // A server that hasn't fetched yet answers with no rates; keep what we
-    // had, and don't record a check, so the next message asks again.
-    if (Object.keys(fresh.rates).length === 0) return cached?.rates || {};
+    // A server that hasn't fetched yet answers with no rates. Keep what we
+    // had, and back off like a failure, or every screen focus would ask again.
+    if (Object.keys(fresh.rates).length === 0) {
+      lastFailureAt = Date.now();
+      return cached?.rates || {};
+    }
     await setSetting(
       RATES_KEY,
       JSON.stringify({ rates: fresh.rates, fetched_at: fresh.fetched_at, checked_at: new Date().toISOString() })
@@ -64,6 +67,10 @@ export const getExchangeRates = async (): Promise<Rates> => {
 };
 
 const roundPaise = (n: number) => Math.round(n * 100) / 100;
+
+/** A foreign spend still at ₹0 because no exchange rate was known when it came in. */
+export const isAwaitingRate = (txn: { original_currency?: string | null; fx_rate?: number | null }): boolean =>
+  !!txn.original_currency && !txn.fx_rate;
 
 export interface RupeePrice {
   /** What the transaction is stored at, in ₹. 0 while no rate is known. */
@@ -131,23 +138,33 @@ export const convertPendingForeignAmounts = async (): Promise<number> => {
 };
 
 /**
- * Re-prices a card's foreign spends after its markup changes, at the rate
- * each was first converted at, so setting the markup fixes spends that came
- * in before it was set.
+ * Brings every foreign spend in line with the markup of the card it's linked
+ * to now, at the rate it was first converted at. Runs after cards are saved,
+ * deleted or re-matched, so a markup set after the spend came in, or a spend
+ * linked to its card later, still ends up priced with the right markup.
  */
-export const applyCardForexMarkup = async (cardId: string, markupPercent: number | null): Promise<void> => {
-  const markup = markupPercent && markupPercent > 0 ? markupPercent : 0;
-  const now = new Date().toISOString();
-  await db.execute(
-    `UPDATE transactions
-       SET fx_markup = ?, amount = ROUND(original_amount * fx_rate * (1 + ? / 100.0), 2), updated_at = ?
-     WHERE card_id = ? AND original_currency IS NOT NULL AND fx_rate IS NOT NULL
-       AND COALESCE(fx_markup, 0) != ?`,
-    [markup, markup, now, cardId, markup]
+export const repriceForeignSpends = async (): Promise<number> => {
+  const rows = rowsOf(
+    await db.execute(
+      `SELECT t.id, t.amount, t.original_currency, t.original_amount, t.fx_rate, t.fx_markup, c.forex_markup AS card_markup
+       FROM transactions t LEFT JOIN cards c ON c.id = t.card_id
+       WHERE t.original_currency IS NOT NULL`
+    )
   );
-  // Still waiting for a rate: just remember the markup for when it arrives.
-  await db.execute(
-    'UPDATE transactions SET fx_markup = ? WHERE card_id = ? AND original_currency IS NOT NULL AND fx_rate IS NULL',
-    [markup, cardId]
-  );
+  let changed = 0;
+  for (const txn of rows) {
+    const rates = txn.fx_rate ? { [txn.original_currency]: txn.fx_rate } : {};
+    const price = priceInRupees(txn.original_amount, txn.original_currency, rates, txn.card_markup);
+    // A spend still waiting for a rate keeps its ₹0; only the markup is remembered.
+    const amount = txn.fx_rate ? price.amount : txn.amount;
+    if (price.fx_markup === txn.fx_markup && amount === txn.amount) continue;
+    await db.execute('UPDATE transactions SET amount = ?, fx_markup = ?, updated_at = ? WHERE id = ?', [
+      amount,
+      price.fx_markup,
+      new Date().toISOString(),
+      txn.id,
+    ]);
+    changed++;
+  }
+  return changed;
 };

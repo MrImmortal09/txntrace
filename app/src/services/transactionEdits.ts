@@ -29,3 +29,9 @@ export const updateTransactionDetails = async (
     id,
   ]);
 };
+
+/** The whole stored row, for the transaction detail sheet. */
+export const loadTransaction = async (id: string): Promise<any | null> => {
+  const rows: any = (await db.execute('SELECT * FROM transactions WHERE id = ?', [id])).rows;
+  return (rows?._array || rows || [])[0] ?? null;
+};

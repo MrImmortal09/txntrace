@@ -39,6 +39,8 @@ const ReportParseForm = ({ transaction, onCancel, onSent }: Props) => {
           type: transaction.type,
           merchant: transaction.merchant_raw,
           date: transaction.date,
+          currency: transaction.original_currency || 'INR',
+          original_amount: transaction.original_amount ?? null,
         },
         reason,
         note: note.trim() || null,

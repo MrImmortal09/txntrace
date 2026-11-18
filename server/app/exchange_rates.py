@@ -39,11 +39,15 @@ CHECK_EVERY_SECONDS = 3600
 _refresh_lock = threading.Lock()
 
 
-def _last_fetched_at() -> datetime | None:
+def _stale_currencies() -> list[str]:
+    """Currencies with no rate yet, or one fetched over a day ago. Checked per
+    currency so one that failed is retried at the next hourly check rather
+    than waiting a day behind the ones that succeeded."""
     with get_db() as conn:
-        row = conn.execute("SELECT MAX(fetched_at) AS last FROM exchange_rates").fetchone()
-    last = row["last"] if row else None
-    return datetime.fromisoformat(last) if last else None
+        rows = conn.execute("SELECT currency, fetched_at FROM exchange_rates").fetchall()
+    cutoff = datetime.now(timezone.utc) - REFRESH_EVERY
+    fresh = {r["currency"] for r in rows if r["fetched_at"] and datetime.fromisoformat(r["fetched_at"]) > cutoff}
+    return [c for c in CURRENCIES if c not in fresh]
 
 
 def _fetch_rate(client: httpx.Client, currency: str) -> float | None:
@@ -60,21 +64,20 @@ def _fetch_rate(client: httpx.Client, currency: str) -> float | None:
 
 
 def refresh_if_stale() -> bool:
-    """Fetches every rate when the stored ones are a day old or missing.
-    Returns whether a fetch happened. Currencies that fail keep their previous
-    rate, and the next check tries again, since MAX(fetched_at) only moves
-    once at least one currency succeeds."""
+    """Fetches each currency whose stored rate is missing or a day old, so a
+    currency is fetched at most once a day once it succeeds. One that fails
+    keeps its previous rate and is tried again at the next check."""
     if not API_NINJAS_KEY:
         return False
     with _refresh_lock:
-        last = _last_fetched_at()
-        if last and datetime.now(timezone.utc) - last < REFRESH_EVERY:
+        stale = _stale_currencies()
+        if not stale:
             return False
 
         now = datetime.now(timezone.utc).isoformat()
         fetched = []
         with httpx.Client(timeout=10.0) as client:
-            for currency in CURRENCIES:
+            for currency in stale:
                 rate = _fetch_rate(client, currency)
                 if rate is not None:
                     fetched.append((currency, rate, now))
@@ -86,7 +89,7 @@ def refresh_if_stale() -> bool:
                          inr_per_unit = EXCLUDED.inr_per_unit, fetched_at = EXCLUDED.fetched_at""",
                     fetched,
                 )
-        log.info("Fetched %d of %d exchange rates", len(fetched), len(CURRENCIES))
+        log.info("Fetched %d of %d stale exchange rates", len(fetched), len(stale))
         return True
 
 

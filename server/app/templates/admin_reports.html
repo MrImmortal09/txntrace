@@ -47,6 +47,9 @@
           <span class="font-semibold {% if r.parsed_type == 'credit' %}text-credit{% else %}text-debit{% endif %}">
             {{ (r.parsed_type or "?")|capitalize }} ₹{{ "%.2f"|format(r.parsed_amount) }}
           </span>
+          {% if r.parsed_currency %}
+          <span class="text-gray-500">(from {{ r.parsed_currency }} {{ "%.2f"|format(r.parsed_original_amount or 0) }})</span>
+          {% endif %}
         {% else %}
           <span class="text-gray-400">no transaction details</span>
         {% endif %}

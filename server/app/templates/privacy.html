@@ -32,12 +32,11 @@
 
   <p>TxnTrace is a personal expense tracker. It reads the bank SMS you give it, turns them into
   transactions, and helps you track card dues, rewards and money split with friends. This policy
-  covers the TxnTrace apps for iPhone and Android and the website at
+  covers the TxnTrace apps for iPhone and Android and the server they use at
   <a href="https://txn.axiosiiitl.dev">txn.axiosiiitl.dev</a>.</p>
 
   <p><strong>In short:</strong> your data stays on your phone unless you sign in to Cloud Backup &amp;
-  Sync. If you do, it is stored on our server so you can back it up, restore it and use the
-  website. We don't show ads, we don't use analytics or tracking, and we don't sell or share your
+  Sync. If you do, it is stored on our server so you can back it up and restore it. We don't show ads, we don't use analytics or tracking, and we don't sell or share your
   data.</p>
 
   <h2>Who runs TxnTrace</h2>
@@ -65,21 +64,21 @@
   of it from the phone, and so does removing the app.</p>
 
   <h2>Data stored on our server, if you sign in</h2>
-  <p>Signing in is optional and only needed for Cloud Backup &amp; Sync and the website. You sign in
+  <p>Signing in is optional and only needed for Cloud Backup &amp; Sync. You sign in
   with your phone number and a one-time code. Once you do, the following is stored on our server
   and linked to your account:</p>
   <table>
     <tr><th>What</th><th>Why</th></tr>
     <tr><td>Your phone number</td><td>It identifies your account, and the sign-in code is sent to it.</td></tr>
-    <tr><td>Your transactions, including the original message text and any location</td><td>Backup, restore, and showing them on the website.</td></tr>
-    <tr><td>Your cards, with their statement and due days, reward program, the rewards you recorded and the statement amounts you entered</td><td>Syncing cards between the website and the app, and backup and restore.</td></tr>
-    <tr><td>Names of the contacts on your phone, if you have given the app contacts access. Names only, never phone numbers or other details.</td><td>So the website can split expenses with the same people.</td></tr>
-    <tr><td>Splits and settlements: who owes what, and payments received</td><td>Showing the same balances on the website and the app.</td></tr>
-    <tr><td>Statements you upload on the website</td><td>The file is read to find transactions and is not kept. The transactions you choose to import are stored.</td></tr>
+    <tr><td>Your transactions, including the original message text and any location</td><td>Backup and restore.</td></tr>
+    <tr><td>Your cards, with their statement and due days, reward program, the rewards you recorded and the statement amounts you entered</td><td>Backup and restore.</td></tr>
+    <tr><td>Names of the contacts on your phone, if you have given the app contacts access. Names only, never phone numbers or other details.</td><td>Backup and restore, so your splits come back with the same people.</td></tr>
+    <tr><td>Splits and settlements: who owes what, and payments received</td><td>Backup and restore.</td></tr>
     <tr><td>Messages you report as read wrong: the message text, what the app read from it, the reason and note you give, and the app version</td><td>The developer reads these to fix how the app reads bank messages. Only messages you choose to report are sent, one at a time.</td></tr>
   </table>
   <p>The log of all your messages is never uploaded; only the text of messages that became
-  transactions is, and of messages you report. The website uses one cookie to keep you signed in, and no tracking cookies.
+  transactions is, and of messages you report. The website at txn.axiosiiitl.dev is only for the
+  developer to run the service, and you never need it to use TxnTrace.
   Like most web servers, ours keeps short-lived logs of requests, including IP addresses, for
   security and troubleshooting.</p>
   <p>Your data is used only to provide these features. It is not used for advertising or
@@ -88,7 +87,7 @@
   <h2>Services that handle your data for us</h2>
   <ul>
     <li><strong>Oracle Cloud</strong> runs our server, and <strong>Cloudflare</strong> carries traffic to
-      it. All traffic between the app or website and the server is encrypted with HTTPS.</li>
+      it. All traffic between the app and the server is encrypted with HTTPS.</li>
     <li><strong>Neon</strong> hosts the database where server data is stored.</li>
     <li><strong>WhatsApp</strong> (Meta) delivers the sign-in code to your phone number as a WhatsApp
       message, so WhatsApp handles your number and that message under
@@ -116,8 +115,8 @@
       message is a spend in another currency; that request carries nothing about you or the message.</li>
     <li>You can turn off contacts access, or stop your Shortcuts automation, at any time in your
       phone's settings.</li>
-    <li>You can see your server data on the website, restore it to your phone from Settings →
-      Cloud Backup &amp; Sync, or ask us for a copy.</li>
+    <li>You can restore your server data to your phone from Settings → Cloud Backup &amp; Sync, or
+      ask us for a copy.</li>
     <li>You can ask us to correct or delete your data at the email address above.</li>
   </ul>
 

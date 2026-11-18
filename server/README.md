@@ -6,6 +6,9 @@ A single deployable FastAPI app: it serves both the statement-import web UI and 
 - Browse all transactions; click one for full details (date, bank, reference, balance, raw message, etc.).
 - Configure cards/accounts and their credit limits at `/cards` — the mobile app matches incoming SMS against these (last-4 digit or a custom pattern) to tag each transaction with a card.
 - The mobile app pulls newly-imported transactions and the card registry from here via **Settings → Sync from Web**.
+- Read the parsing problems users report from the app at `/admin/reports`.
+
+**The website is admin-only.** Its pages open only for the phone numbers in `ADMIN_PHONES`; anyone else who signs in gets a page saying the site is for the admin. The JSON API the app uses (sign-in, sync, backup, reports, exchange rates) is unaffected, and `/privacy` stays public.
 
 Storage is Postgres, meant to be a free [Neon](https://neon.tech) project — no local database to run or back up. Set the connection string as `DB` in `server/.env` (see `server/.env.example`).
 
@@ -58,6 +61,17 @@ pip install -r requirements.txt
 cp .env.example .env
 nano .env   # set DB=<your Neon connection string>
 ```
+
+The other settings in `.env.example`:
+
+| Setting | What it's for |
+|---|---|
+| `JWT_SECRET` | Signs sign-in tokens. |
+| `WA_SERVER_URL`, `WA_API_KEY` | The WhatsApp server that sends sign-in codes. Unset, codes are printed to the log instead. |
+| `ADMIN_PHONES` | Comma-separated 10-digit numbers allowed to open the website. Unset, nobody can. |
+| `API_NINJAS_KEY` | [API Ninjas](https://api-ninjas.com) key. The server fetches INR rates for about 30 currencies once a day with it and serves them to the app at `/api/exchange-rates`, so foreign-currency card spends can be priced in rupees. |
+
+Restart the service after changing `.env`; it's only read at startup.
 
 This file is gitignored on purpose — it's created once, by hand, on the VM, and never touched by `git pull` or the deploy pipeline.
 

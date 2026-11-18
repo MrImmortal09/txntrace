@@ -10,7 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.requests import Request
-from starlette.responses import RedirectResponse
+from starlette.responses import RedirectResponse, Response
+from urllib.parse import quote
 import os
 import jwt
 import httpx
@@ -77,6 +78,21 @@ def _account_exists(user_id: str | None) -> bool:
         return False
     with get_db() as conn:
         return conn.execute("SELECT 1 FROM users WHERE id = %s", (user_id,)).fetchone() is not None
+
+def web_admin(request: Request) -> str | Response:
+    """Gate for every website page. The website is the admin's portal: the
+    app's users never need it, since everything they do happens in the app
+    over the API, which this doesn't touch. Signed out goes to the login page
+    and comes back after; signed in as anyone but an admin gets a page saying
+    so. Pages call it as `user = web_admin(request)` and return it unless
+    it's a str (the admin's user id)."""
+    user_id = get_web_user(request)
+    if not user_id:
+        next_path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        return RedirectResponse(f"/login?next={quote(next_path, safe='/')}")
+    if user_id not in ADMIN_USER_IDS:
+        return templates.TemplateResponse(request, "admin_only.html", status_code=403)
+    return user_id
 
 OTP_STORE = {}
 
@@ -170,15 +186,17 @@ def _row_id(bank: str, row: dict[str, Any]) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    user_id = get_web_user(request)
-    if not user_id: return RedirectResponse("/login")
+    user_id = web_admin(request)
+    if not isinstance(user_id, str):
+        return user_id
     return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/transactions", response_class=HTMLResponse)
 def transactions_page(request: Request):
-    user_id = get_web_user(request)
-    if not user_id: return RedirectResponse("/login")
+    user_id = web_admin(request)
+    if not isinstance(user_id, str):
+        return user_id
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM transactions WHERE user_id = %s ORDER BY date DESC", (user_id,)).fetchall()
         contacts = conn.execute("SELECT * FROM contacts WHERE user_id = %s ORDER BY name ASC", (user_id,)).fetchall()
@@ -217,8 +235,9 @@ def transactions_page(request: Request):
 
 @app.get("/cards", response_class=HTMLResponse)
 def cards_page(request: Request):
-    user_id = get_web_user(request)
-    if not user_id: return RedirectResponse("/login")
+    user_id = web_admin(request)
+    if not isinstance(user_id, str):
+        return user_id
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM cards WHERE user_id = %s ORDER BY created_at DESC", (user_id,)).fetchall()
     return templates.TemplateResponse(
@@ -513,8 +532,9 @@ def api_export_settlements(since: str | None = Query(default=None), user_id: str
 
 @app.get("/friends", response_class=HTMLResponse)
 def friends_page(request: Request):
-    user_id = get_web_user(request)
-    if not user_id: return RedirectResponse("/login")
+    user_id = web_admin(request)
+    if not isinstance(user_id, str):
+        return user_id
     with get_db() as conn:
         # Mirrors the mobile app's own FriendsScreen query: combines contacts
         # from both splits and settlements so advance credits or credit-only
@@ -540,8 +560,9 @@ def friends_page(request: Request):
 
 @app.get("/friends/{contact_id}", response_class=HTMLResponse)
 def friend_detail_page(request: Request, contact_id: str):
-    user_id = get_web_user(request)
-    if not user_id: return RedirectResponse("/login")
+    user_id = web_admin(request)
+    if not isinstance(user_id, str):
+        return user_id
     with get_db() as conn:
         splits = conn.execute("SELECT * FROM splits WHERE contact_id = %s AND user_id = %s", (contact_id, user_id)).fetchall()
         settlements = conn.execute(
@@ -701,6 +722,13 @@ def _clip(value: Any, limit: int = 200) -> str | None:
     return text[:limit] or None
 
 
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def get_admin_user(user_id: str = Depends(get_current_user)) -> str:
     # 404 rather than 403, so the admin API doesn't announce itself.
     if user_id not in ADMIN_USER_IDS:
@@ -722,10 +750,9 @@ def api_create_parse_report(payload: dict[str, Any], user_id: str = Depends(get_
     parsed = payload.get("parsed")
     if not isinstance(parsed, dict):
         parsed = {}
-    try:
-        amount = float(parsed["amount"]) if parsed.get("amount") is not None else None
-    except (TypeError, ValueError):
-        amount = None
+    amount = _as_float(parsed.get("amount"))
+    original_amount = _as_float(parsed.get("original_amount"))
+    currency = _clip(parsed.get("currency"), 3)
 
     report_id = "rep_" + hashlib.sha256(f"{user_id}|{body}".encode()).hexdigest()[:24]
     now = datetime.now(timezone.utc).isoformat()
@@ -733,8 +760,9 @@ def api_create_parse_report(payload: dict[str, Any], user_id: str = Depends(get_
         conn.execute(
             """INSERT INTO parse_reports
                (id, user_id, transaction_id, sender, sms_body, parsed_bank, parsed_amount, parsed_type,
-                parsed_merchant, parsed_date, reason, note, app_version, platform, status, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open', %s)
+                parsed_merchant, parsed_date, reason, note, app_version, platform, status, created_at,
+                parsed_currency, parsed_original_amount)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open', %s, %s, %s)
                ON CONFLICT (id) DO UPDATE SET
                  transaction_id = EXCLUDED.transaction_id,
                  sender = EXCLUDED.sender,
@@ -748,7 +776,9 @@ def api_create_parse_report(payload: dict[str, Any], user_id: str = Depends(get_
                  app_version = EXCLUDED.app_version,
                  platform = EXCLUDED.platform,
                  status = 'open',
-                 created_at = EXCLUDED.created_at""",
+                 created_at = EXCLUDED.created_at,
+                 parsed_currency = EXCLUDED.parsed_currency,
+                 parsed_original_amount = EXCLUDED.parsed_original_amount""",
             (
                 report_id,
                 user_id,
@@ -765,6 +795,8 @@ def api_create_parse_report(payload: dict[str, Any], user_id: str = Depends(get_
                 _clip(payload.get("app_version"), 40),
                 _clip(payload.get("platform"), 40),
                 now,
+                currency if currency != "INR" else None,
+                original_amount if currency != "INR" else None,
             ),
         )
     return {"id": report_id}
@@ -772,11 +804,9 @@ def api_create_parse_report(payload: dict[str, Any], user_id: str = Depends(get_
 
 @app.get("/admin/reports", response_class=HTMLResponse)
 def admin_reports_page(request: Request, status: str = Query(default="open")):
-    user_id = get_web_user(request)
-    if not user_id:
-        return RedirectResponse("/login?next=/admin/reports")
-    if user_id not in ADMIN_USER_IDS:
-        raise HTTPException(status_code=404, detail="Not Found")
+    user_id = web_admin(request)
+    if not isinstance(user_id, str):
+        return user_id
     if status not in (*REPORT_STATUSES, "all"):
         status = "open"
     with get_db() as conn:
