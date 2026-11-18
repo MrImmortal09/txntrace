@@ -14,10 +14,16 @@ interface SmsLogEntry {
   status: 'parsed' | 'unparsed';
   bank: string | null;
   amount: number | null;
+  /** What the amount was read in; null on rows logged before this was recorded. */
+  currency?: string | null;
   type: string | null;
   merchant: string | null;
   reference: string | null;
 }
+
+// "USD " before a foreign amount, so it isn't read as rupees.
+const foreignPrefix = (item: { currency?: string | null }) =>
+  item.currency && item.currency !== 'INR' ? `${item.currency} ` : '';
 
 const SOURCE_LABEL: Record<string, string> = {
   shortcut: 'Shortcut',
@@ -108,7 +114,7 @@ const LogsScreen = () => {
             <TouchableOpacity
               activeOpacity={0.8}
               onLongPress={() => {
-                const parsedText = `${item.bank} · ${item.type === 'credit' ? '+' : '-'}${item.amount} · ${item.merchant}`;
+                const parsedText = `${item.bank} · ${item.type === 'credit' ? '+' : '-'}${foreignPrefix(item)}${item.amount} · ${item.merchant}`;
                 Clipboard.setString(parsedText);
                 if (Platform.OS === 'android') {
                   ToastAndroid.show('Copied to clipboard', ToastAndroid.SHORT);
@@ -119,6 +125,7 @@ const LogsScreen = () => {
             >
               <Text style={[styles.parsed, { color: colors.text }]} selectable>
                 {item.bank} · {item.type === 'credit' ? '+' : '-'}
+                {foreignPrefix(item)}
                 {item.amount} · {item.merchant}
               </Text>
             </TouchableOpacity>

@@ -43,8 +43,10 @@ const firstRupeeIndex = (message: string): number => {
   return positions.length ? Math.min(...positions) : -1;
 };
 
-// "USD 100.00 (INR 8,400.00)": the bank's own rupee figure, right after the foreign one.
-const BRACKETED_RUPEES = /^\s*\(\s*(?:Rs\.?|INR|₹)\s*(\d[\d,]*(?:\.\d+)?)\s*\)/i;
+// "USD 100.00 (INR 8,400.00)" or "(approx. INR 8,400.00)": the bank's own
+// rupee figure, right after the foreign one.
+const BRACKETED_RUPEES =
+  /^\s*\(\s*(?:(?:approx(?:imately)?|equiv(?:alent)?(?:\s+to)?|i\.?e\.?|~|≈)\.?\s*)?(?:Rs\.?|INR|₹)\s*(\d[\d,]*(?:\.\d+)?)\s*\)/i;
 
 /**
  * The amount the transaction was made in, and its currency.
@@ -61,12 +63,14 @@ const BRACKETED_RUPEES = /^\s*\(\s*(?:Rs\.?|INR|₹)\s*(\d[\d,]*(?:\.\d+)?)\s*\)
 export const extractTransactionAmount = (message: string): { amount: number; currency: string } | null => {
   const foreign = message.match(FOREIGN_AMOUNT_PATTERN);
   if (foreign && foreign.index !== undefined) {
-    const billed = message.slice(foreign.index + foreign[0].length).match(BRACKETED_RUPEES);
-    if (billed) return { amount: parseFloat(billed[1].replace(/,/g, '')), currency: 'INR' };
     const rupeeAt = firstRupeeIndex(message);
-    const amount = parseFloat(foreign[2].replace(/,/g, ''));
-    if (!isNaN(amount) && (rupeeAt === -1 || foreign.index < rupeeAt)) {
-      return { amount, currency: foreign[1] };
+    // Only when the foreign amount comes first. "Rs.2,000.00 debited ...
+    // markup on USD 23.00 (Rs 70.00)" is a ₹2,000 spend, not ₹70.
+    if (rupeeAt === -1 || foreign.index < rupeeAt) {
+      const billed = message.slice(foreign.index + foreign[0].length).match(BRACKETED_RUPEES);
+      if (billed) return { amount: parseFloat(billed[1].replace(/,/g, '')), currency: 'INR' };
+      const amount = parseFloat(foreign[2].replace(/,/g, ''));
+      if (!isNaN(amount)) return { amount, currency: foreign[1] };
     }
   }
   const inr = extractAmount(message);

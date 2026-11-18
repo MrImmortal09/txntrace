@@ -38,6 +38,12 @@ CHECK_EVERY_SECONDS = 3600
 
 _refresh_lock = threading.Lock()
 
+# /api/exchange-rates is public and the rates change about once a day, so the
+# answer is kept in memory rather than read from the database per request.
+# Dropped whenever new rates are written.
+CACHE_SECONDS = 600
+_cached: dict = {"at": 0.0, "value": None}
+
 
 def _stale_currencies() -> list[str]:
     """Currencies with no rate yet, or one fetched over a day ago. Checked per
@@ -89,6 +95,7 @@ def refresh_if_stale() -> bool:
                          inr_per_unit = EXCLUDED.inr_per_unit, fetched_at = EXCLUDED.fetched_at""",
                     fetched,
                 )
+            _cached["value"] = None
         log.info("Fetched %d of %d stale exchange rates", len(fetched), len(stale))
         return True
 
@@ -110,13 +117,17 @@ def start_background_refresh() -> None:
 
 
 def stored_rates() -> dict:
+    if _cached["value"] is not None and time.monotonic() - _cached["at"] < CACHE_SECONDS:
+        return _cached["value"]
     with get_db() as conn:
         rows = conn.execute("SELECT currency, inr_per_unit, fetched_at FROM exchange_rates").fetchall()
-    return {
+    value = {
         "base": "INR",
         "rates": {r["currency"]: r["inr_per_unit"] for r in rows},
         "fetched_at": max((r["fetched_at"] for r in rows), default=None),
     }
+    _cached.update(at=time.monotonic(), value=value)
+    return value
 
 
 def rates_overview() -> dict:

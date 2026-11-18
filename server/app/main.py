@@ -13,9 +13,10 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from urllib.parse import quote
 import os
+import hmac
 import jwt
 import httpx
-import random
+import secrets
 
 from .bank_styles import BANKS, FALLBACK, bank_style_for
 from .db import get_db, init_db
@@ -104,16 +105,36 @@ def web_admin(request: Request) -> str | Response:
         return templates.TemplateResponse(request, "admin_only.html", status_code=403)
     return user_id
 
-OTP_STORE = {}
+# Sign-in codes, in memory. A code guards an account's data, and for the
+# numbers in ADMIN_PHONES every user's reported messages, so it has to be
+# hard to guess: it expires, a few wrong tries void it, and a number can only
+# ask for so many codes an hour. Together that allows ~25 guesses an hour at a
+# 6-digit code.
+OTP_TTL = timedelta(minutes=10)
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_AFTER = timedelta(seconds=30)
+OTP_MAX_PER_HOUR = 5
+
+OTP_STORE: dict[str, dict] = {}  # phone -> {"code", "expires", "attempts"}
+OTP_REQUESTS: dict[str, list[datetime]] = {}  # phone -> when codes were sent, last hour
+
 
 @app.post("/api/auth/request-otp")
 async def request_otp(payload: dict):
-    phone = payload.get("phone")
-    if not phone or len(str(phone)) != 10:
+    phone = str(payload.get("phone") or "")
+    if len(phone) != 10 or not phone.isdigit():
         raise HTTPException(status_code=400, detail="Invalid Indian phone number")
-    
-    otp = str(random.randint(100000, 999999))
-    OTP_STORE[phone] = otp
+
+    now = datetime.now(timezone.utc)
+    recent = [t for t in OTP_REQUESTS.get(phone, []) if now - t < timedelta(hours=1)]
+    if recent and now - recent[-1] < OTP_RESEND_AFTER:
+        raise HTTPException(status_code=429, detail="A code was just sent. Wait a few seconds before asking for another.")
+    if len(recent) >= OTP_MAX_PER_HOUR:
+        raise HTTPException(status_code=429, detail="Too many codes asked for this number. Try again in an hour.")
+    OTP_REQUESTS[phone] = recent + [now]
+
+    otp = f"{secrets.randbelow(900_000) + 100_000}"
+    OTP_STORE[phone] = {"code": otp, "expires": now + OTP_TTL, "attempts": 0}
     
     if not WA_SERVER_URL or not WA_API_KEY:
         print(f"Mock OTP for {phone}: {otp}")
@@ -137,11 +158,19 @@ async def request_otp(payload: dict):
 
 @app.post("/api/auth/verify-otp")
 async def verify_otp(payload: dict, request: Request):
-    phone = payload.get("phone")
-    otp = payload.get("otp")
-    if str(OTP_STORE.get(phone)) != str(otp):
+    phone = str(payload.get("phone") or "")
+    otp = str(payload.get("otp") or "")
+    entry = OTP_STORE.get(phone)
+    if not entry or datetime.now(timezone.utc) > entry["expires"]:
+        OTP_STORE.pop(phone, None)
+        raise HTTPException(status_code=401, detail="This code has expired. Ask for a new one.")
+    entry["attempts"] += 1
+    if not hmac.compare_digest(entry["code"], otp):
+        if entry["attempts"] >= OTP_MAX_ATTEMPTS:
+            OTP_STORE.pop(phone, None)
+            raise HTTPException(status_code=401, detail="Too many wrong codes. Ask for a new one.")
         raise HTTPException(status_code=401, detail="Invalid OTP")
-        
+
     del OTP_STORE[phone]
     
     with get_db() as conn:

@@ -1,6 +1,11 @@
 import { db } from '../src/db/schema';
 import { fetchExchangeRates } from '../src/services/webSync';
-import { getExchangeRates, isAwaitingRate, repriceForeignSpends } from '../src/services/exchangeRates';
+import {
+  convertPendingForeignAmounts,
+  getExchangeRates,
+  isAwaitingRate,
+  repriceForeignSpends,
+} from '../src/services/exchangeRates';
 
 jest.mock('../src/db/schema', () => ({ db: { execute: jest.fn() } }));
 jest.mock('../src/services/webSync', () => ({ fetchExchangeRates: jest.fn() }));
@@ -45,8 +50,48 @@ describe('repriceForeignSpends', () => {
   });
 });
 
+describe('repriceForeignSpends and convertPendingForeignAmounts', () => {
+  beforeEach(() => execute.mockReset());
+
+  it('leaves spends that were split or matched to a friend alone', async () => {
+    execute.mockResolvedValue({ rows: [] });
+    await repriceForeignSpends();
+    const [query] = execute.mock.calls[0];
+    expect(query).toContain('NOT EXISTS (SELECT 1 FROM splits');
+    expect(query).toContain('NOT EXISTS (SELECT 1 FROM settlements');
+  });
+
+  it('prices a pending spend only if its markup is still the one it read', async () => {
+    const cached = JSON.stringify({ rates: { EUR: 100 }, fetched_at: null, checked_at: new Date().toISOString() });
+    execute.mockImplementation(async (q: string) => {
+      if (q.includes('FROM app_settings')) return { rows: [{ value: cached }] };
+      if (q.includes('fx_rate IS NULL') && q.startsWith('SELECT')) {
+        return { rows: [{ id: 'p', original_currency: 'EUR', original_amount: 5, fx_markup: 2 }] };
+      }
+      return { rowsAffected: 0 }; // a card save changed the markup meanwhile
+    });
+    expect(await convertPendingForeignAmounts()).toBe(0);
+    const update = execute.mock.calls.find(([q]) => q.startsWith('UPDATE transactions'))!;
+    expect(update[0]).toContain('COALESCE(fx_markup, 0) = ?');
+    expect(update[1]).toEqual([510, 100, expect.any(String), 'p', 2]);
+  });
+});
+
 describe('getExchangeRates', () => {
+  it('asks the server again when the cached copy lacks a needed currency', async () => {
+    execute.mockReset();
+    const cached = JSON.stringify({ rates: { USD: 90 }, fetched_at: null, checked_at: new Date().toISOString() });
+    execute.mockImplementation(async (q: string) => (q.includes('SELECT value') ? { rows: [{ value: cached }] } : {}));
+    (fetchExchangeRates as jest.Mock).mockResolvedValue({ rates: { USD: 90, THB: 2.75 }, fetched_at: null });
+
+    expect(await getExchangeRates(['USD'])).toEqual({ USD: 90 });
+    expect(fetchExchangeRates).not.toHaveBeenCalled();
+    expect(await getExchangeRates(['THB'])).toEqual({ USD: 90, THB: 2.75 });
+    expect(fetchExchangeRates).toHaveBeenCalledTimes(1);
+  });
+
   it('backs off after the server answers with no rates', async () => {
+    (fetchExchangeRates as jest.Mock).mockClear();
     execute.mockReset();
     execute.mockResolvedValue({ rows: [] });
     (fetchExchangeRates as jest.Mock).mockResolvedValue({ rates: {}, fetched_at: null });

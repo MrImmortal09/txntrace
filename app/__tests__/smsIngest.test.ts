@@ -14,6 +14,7 @@ jest.mock('@op-engineering/op-sqlite', () => ({
 const mockExecutedQueries: { query: string; params: any[] }[] = [];
 let mockCards: any[] = [];
 let mockInsertRowsAffected = 1;
+let mockAliases: any[] = [];
 
 jest.mock('../src/db/schema', () => ({
   db: {
@@ -23,6 +24,10 @@ jest.mock('../src/db/schema', () => ({
 
       if (q.startsWith('SELECT * FROM CARDS')) {
         return { rows: { _array: mockCards } };
+      }
+
+      if (q.includes('FROM CONTACT_ALIASES')) {
+        return { rows: { _array: mockAliases } };
       }
 
       if (q.startsWith('INSERT OR IGNORE INTO TRANSACTIONS')) {
@@ -66,6 +71,7 @@ describe('SMS Ingestion and Batch Processing', () => {
     mockCards = [];
     mockInsertRowsAffected = 1;
     mockRates = {};
+    mockAliases = [];
     (Platform as any).OS = 'ios';
   });
 
@@ -303,6 +309,15 @@ describe('SMS Ingestion and Batch Processing', () => {
       amount: 8400,
       currency: 'INR',
     });
+    expect(extractTransactionAmount('Txn of USD 100.00 (approx. INR 8,400.00) on SBI Card')).toEqual({
+      amount: 8400,
+      currency: 'INR',
+    });
+    // A bracketed figure later in the message doesn't replace the rupee amount that comes first.
+    expect(extractTransactionAmount('Rs.2,000.00 debited from A/c XX12 incl. markup on USD 23.00 (Rs 70.00)')).toEqual({
+      amount: 2000,
+      currency: 'INR',
+    });
   });
 
   it('prices a foreign spend at the rate plus the card markup', () => {
@@ -347,6 +362,32 @@ describe('SMS Ingestion and Batch Processing', () => {
     const params = mockExecutedQueries.find(e => e.query.includes('INSERT OR IGNORE INTO transactions'))!.params;
     expect(params[2]).toBe(0);
     expect(params.slice(14, 18)).toEqual(['USD', 1, null, 0]);
+  });
+
+  it('logs the foreign amount as the message gave it', async () => {
+    mockRates = { USD: 90 };
+    await processSMSBatch([
+      { id: 'msg-usd-log', sender: 'AX-IDFCFB', body: IDFC_USD_SPEND, receivedAt: '2026-10-29T07:17:00.000Z' },
+    ]);
+    const log = mockExecutedQueries.find(e => e.query.includes('INSERT OR IGNORE INTO sms_log'))!.params;
+    // [..., amount(7), type, merchant, reference, logged_at, location, currency(13)]
+    expect(log[7]).toBe(1);
+    expect(log[13]).toBe('USD');
+  });
+
+  it('does not settle a foreign credit from a friend while it has no rupee amount', async () => {
+    mockAliases = [{ contact_id: 'c1', contact_name: 'John Smith' }];
+    await processSMSBatch([
+      {
+        id: 'msg-usd-credit',
+        sender: 'AX-ICICIT',
+        body: 'Dear Customer, Acct XX577 is credited with USD 20.00 on 29-Oct-26 from JOHN SMITH. UPI:123456789012',
+        receivedAt: '2026-10-29T07:17:00.000Z',
+      },
+    ]);
+    expect(mockExecutedQueries.some(e => e.query.includes('INSERT INTO settlements'))).toBe(false);
+    const flagged = mockExecutedQueries.find(e => e.query.includes('needs_contact_match = 1'));
+    expect(flagged).toBeDefined();
   });
 
   it('checkNewMessages drains messages from SharedSMSStore on iOS', async () => {

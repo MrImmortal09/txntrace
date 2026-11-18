@@ -54,7 +54,9 @@ const foreignAmountLine = (t: TransactionRow): string | null => {
   const original = `${t.original_currency} ${t.original_amount.toFixed(2)}`;
   if (!t.fx_rate) return `${original} · waiting for an exchange rate`;
   const markup = t.fx_markup ? ` + ${t.fx_markup}% card markup` : ' · no card markup set';
-  return `${original} at ₹${t.fx_rate.toFixed(2)}${markup}`;
+  // Below ₹1 (yen, rupiah, dong) two decimals would show ₹0.00 or ₹0.01.
+  const rate = t.fx_rate < 1 ? t.fx_rate.toPrecision(3) : t.fx_rate.toFixed(2);
+  return `${original} at ₹${rate}${markup}`;
 };
 
 interface Props {

@@ -20,7 +20,7 @@ import {
 } from '../services/creditCards';
 import { formatShortRate, formatUnits } from '../services/rewards/engine';
 import { openLocationInGoogleMaps } from '../utils/maps';
-import { isAwaitingRate } from '../services/exchangeRates';
+import { alertAwaitingRate, isAwaitingRate } from '../services/exchangeRates';
 import { useTheme } from '../theme/ThemeProvider';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
 import ContactListEmpty, { LimitedContactsNote } from '../components/ContactListEmpty';
@@ -28,14 +28,6 @@ import ContactListEmpty, { LimitedContactsNote } from '../components/ContactList
 const SWIPE_THRESHOLD = 100;
 
 type Transaction = TransactionRow;
-
-// A foreign spend that came in before any exchange rate is held at ₹0, and a
-// split made now would be a settled ₹0 split that never catches up.
-const alertAwaitingRate = () =>
-  Alert.alert(
-    'Waiting for an exchange rate',
-    'This spend is in another currency and has no rupee amount yet. Split it once it has one: open the app with a connection and it’s priced automatically.'
-  );
 
 interface SplitContact {
   id: string;
@@ -313,6 +305,7 @@ const ReviewScreen = () => {
   const handleMarkCreditForFriend = async () => {
     const txn = txns[currentIndex];
     if (!txn) return;
+    if (isAwaitingRate(txn)) return alertAwaitingRate();
     try {
       const result = await autoMatchCreditTransaction(txn);
       if (result.matched) {

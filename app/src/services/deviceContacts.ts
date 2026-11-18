@@ -1,6 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import Contacts, { Contact } from 'react-native-contacts';
-import { requestContactsAccess } from './permissions';
+import { hasContactsAccess, requestContactsAccess } from './permissions';
+
+/** The list, and whether iOS shares only some contacts ("Limited Access"). */
+const readContacts = async (granted: boolean): Promise<{ list: Contact[]; limited: boolean }> => {
+  if (!granted) return { list: [], limited: false };
+  let list: Contact[] = [];
+  try {
+    list = await Contacts.getAll();
+  } catch (error) {
+    console.error('Failed to load contacts:', error);
+  }
+  // Separate, so a failed status check only loses the note, never the list.
+  let limited = false;
+  try {
+    limited = (await Contacts.checkPermission()) === 'limited';
+  } catch {
+    limited = false;
+  }
+  return { list, limited };
+};
 
 export const contactName = (c: Contact) => c.displayName || `${c.givenName || ''} ${c.familyName || ''}`.trim();
 
@@ -39,26 +59,30 @@ export const useDeviceContacts = (open: boolean) => {
     setAllowed(null);
     // Never rejects: a failed request counts as not allowed.
     const granted = await requestContactsAccess();
-    let list: Contact[] = [];
-    let isLimited = false;
-    if (granted) {
-      try {
-        list = await Contacts.getAll();
-      } catch (error) {
-        console.error('Failed to load contacts:', error);
-      }
-      // Separate, so a failed status check only loses the note, never the list.
-      try {
-        isLimited = (await Contacts.checkPermission()) === 'limited';
-      } catch {
-        isLimited = false;
-      }
-    }
+    const { list, limited: isLimited } = await readContacts(granted);
     if (ask !== latest.current) return;
     setContacts(list);
     setAllowed(granted);
     setLimited(isLimited);
   }, []);
+
+  // Back from Settings (where the limited-access note and the refused-access
+  // alert send people): show what's shared now. Checks without asking, so a
+  // refusal doesn't bring the alert straight back.
+  useEffect(() => {
+    if (!open) return;
+    const sub = AppState.addEventListener('change', async state => {
+      if (state !== 'active') return;
+      const ask = ++latest.current;
+      const granted = await hasContactsAccess();
+      const { list, limited: isLimited } = await readContacts(granted);
+      if (ask !== latest.current) return;
+      setContacts(list);
+      setAllowed(granted);
+      setLimited(isLimited);
+    });
+    return () => sub.remove();
+  }, [open]);
 
   useEffect(() => {
     if (!open) {

@@ -19,17 +19,9 @@ import {
   markTransactionAsMine,
 } from '../services/settlements';
 import { openLocationInGoogleMaps } from '../utils/maps';
-import { isAwaitingRate } from '../services/exchangeRates';
+import { alertAwaitingRate, isAwaitingRate } from '../services/exchangeRates';
 
 type Transaction = TransactionRow;
-
-// A foreign spend that came in before any exchange rate is held at ₹0, and a
-// split made now would be a settled ₹0 split that never catches up.
-const alertAwaitingRate = () =>
-  Alert.alert(
-    'Waiting for an exchange rate',
-    'This spend is in another currency and has no rupee amount yet. Split it once it has one: open the app with a connection and it’s priced automatically.'
-  );
 
 const DailyScreen = () => {
   const { colors } = useTheme();
@@ -128,6 +120,7 @@ const DailyScreen = () => {
   };
 
   const handleMarkForFriend = async (txn: Transaction) => {
+    if (isAwaitingRate(txn)) return alertAwaitingRate();
     try {
       const result = await autoMatchCreditTransaction(txn);
       if (result.matched) {

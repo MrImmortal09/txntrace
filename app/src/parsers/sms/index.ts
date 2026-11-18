@@ -2,7 +2,7 @@ import { db } from '../../db/schema';
 import { extractReference, extractDateFromSms, extractSenderAndBody, extractTransactionAmount } from './utils';
 import { findAliasForName, applySettlement, looksLikePersonName } from '../../services/settlements';
 import { matchCard, Card } from '../../services/cardMatching';
-import { getExchangeRates, priceInRupees } from '../../services/exchangeRates';
+import { getExchangeRates, isAwaitingRate, priceInRupees } from '../../services/exchangeRates';
 import * as hdfc from './hdfc';
 import * as icici from './icici';
 import * as sbi from './sbi';
@@ -60,11 +60,6 @@ const BANK_MARKERS = /\b(a\/c|acct|account|avl\s*bal|available\s*bal|upi|imps|ne
 
 export const looksLikeBankSms = (body: string): boolean => BANK_MARKERS.test(body);
 
-/** Whether a message is a spend in another currency, which needs exchange rates to price. */
-export const isForeignCurrencySms = (body: string): boolean => {
-  const currency = extractTransactionAmount(body)?.currency;
-  return !!currency && currency !== 'INR';
-};
 
 export const routeSms = (sender: string, body: string, timestamp: string) => {
   for (const parser of PARSERS) {
@@ -99,7 +94,14 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
   // Only a spend abroad needs rates, and getting them can mean a network
   // call, so look first. A spend that finds no rate is stored at ₹0 and
   // priced later by convertPendingForeignAmounts.
-  const rates = messages.some(m => m.body && isForeignCurrencySms(m.body)) ? await getExchangeRates() : {};
+  const neededCurrencies = [
+    ...new Set(
+      messages
+        .map(m => (m.body ? extractTransactionAmount(m.body)?.currency : undefined))
+        .filter((c): c is string => !!c && c !== 'INR')
+    ),
+  ];
+  const rates = neededCurrencies.length ? await getExchangeRates(neededCurrencies) : {};
 
   for (const msg of messages) {
     try {
@@ -149,8 +151,8 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
 
       if (parsed) {
         const card = matchCard(cards, effectiveSender, body) || matchCard(cards, effectiveSender, normalizedBody);
+        // parsed keeps what the message said (logged below); price is what's stored.
         const price = priceInRupees(parsed.amount, parsed.currency, rates, card?.forex_markup);
-        parsed = { ...parsed, amount: price.amount };
 
         // Raw sender/body are kept alongside the parsed fields — not for display,
         // but so a bad extraction (wrong merchant, wrong amount) can be diagnosed
@@ -163,7 +165,7 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
           [
             txnKey,
             parsed.bank,
-            parsed.amount,
+            price.amount,
             parsed.type,
             parsed.merchant,
             parsed.date,
@@ -189,8 +191,10 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
         // money that was only ever received once.
         if (insertResult.rowsAffected > 0 && parsed.type === 'credit' && looksLikePersonName(parsed.merchant)) {
           const alias = await findAliasForName(parsed.merchant!);
-          if (alias) {
-            await applySettlement(alias.contact_id, alias.contact_name, parsed.amount, txnKey);
+          // A foreign credit still at ₹0 waits to be matched by hand once it's
+          // priced; settling now would record a ₹0 payment.
+          if (alias && !isAwaitingRate(price)) {
+            await applySettlement(alias.contact_id, alias.contact_name, price.amount, txnKey);
           } else {
             await db.execute('UPDATE transactions SET needs_contact_match = 1 WHERE id = ?', [txnKey]);
           }
@@ -203,8 +207,8 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
       // later, since it never produces a transaction row to inspect otherwise.
       await db.execute(
         `INSERT OR IGNORE INTO sms_log
-          (id, sender, body, received_at, source, status, bank, amount, type, merchant, reference, logged_at, location)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, sender, body, received_at, source, status, bank, amount, type, merchant, reference, logged_at, location, currency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           logKey,
           effectiveSender,
@@ -219,6 +223,7 @@ export const processSMSBatch = async (messages: RawSMS[]) => {
           reference,
           new Date().toISOString(),
           location,
+          parsed?.currency ?? null,
         ]
       );
     } catch (error) {
@@ -377,9 +382,8 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
     }
 
     // After the duplicate check: a re-pasted message shouldn't wait on the network.
-    const rates = parsed.currency && parsed.currency !== 'INR' ? await getExchangeRates() : {};
+    const rates = parsed.currency && parsed.currency !== 'INR' ? await getExchangeRates([parsed.currency]) : {};
     const price = priceInRupees(parsed.amount, parsed.currency, rates, card?.forex_markup);
-    parsed = { ...parsed, amount: price.amount };
 
     const insertResult = await db.execute(
       `INSERT OR IGNORE INTO transactions
@@ -389,7 +393,7 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
       [
         txnKey,
         parsed.bank,
-        parsed.amount,
+        price.amount,
         parsed.type,
         parsed.merchant,
         parsed.date,
@@ -408,8 +412,8 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
 
     if (insertResult.rowsAffected > 0 && parsed.type === 'credit' && looksLikePersonName(parsed.merchant)) {
       const alias = await findAliasForName(parsed.merchant!);
-      if (alias) {
-        await applySettlement(alias.contact_id, alias.contact_name, parsed.amount, txnKey);
+      if (alias && !isAwaitingRate(price)) {
+        await applySettlement(alias.contact_id, alias.contact_name, price.amount, txnKey);
       } else {
         await db.execute('UPDATE transactions SET needs_contact_match = 1 WHERE id = ?', [txnKey]);
       }
@@ -417,8 +421,8 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
 
     await db.execute(
       `INSERT OR IGNORE INTO sms_log
-        (id, sender, body, received_at, source, status, bank, amount, type, merchant, reference, logged_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, sender, body, received_at, source, status, bank, amount, type, merchant, reference, logged_at, currency)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         logKey,
         effectiveSender,
@@ -432,6 +436,7 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
         parsed.merchant,
         reference,
         now,
+        parsed.currency ?? null,
       ]
     );
 
@@ -441,7 +446,7 @@ export const ingestManualSMS = async (params: IngestManualSMSParams): Promise<In
       transaction: {
         id: txnKey,
         bank: parsed.bank,
-        amount: parsed.amount as number,
+        amount: price.amount,
         type: parsed.type as 'debit' | 'credit',
         merchant: parsed.merchant,
         date: parsed.date,

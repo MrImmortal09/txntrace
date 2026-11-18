@@ -178,6 +178,14 @@ export const setupDatabase = async () => {
     // Already migrated.
   }
 
+  // The currency the parser read the amount in. amount is logged as the
+  // message gave it, so "USD 1.00" shows as that, not as the rupee price.
+  try {
+    await db.execute(`ALTER TABLE sms_log ADD COLUMN currency TEXT;`);
+  } catch (error) {
+    // Already migrated.
+  }
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS splits (
       id TEXT PRIMARY KEY,

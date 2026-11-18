@@ -30,6 +30,11 @@ interface StoredSmsTxn {
  * corrected name might now read as a person's (or stop reading as one), or
  * match an alias that didn't exist yet at ingestion time.
  */
+const rowsOf = (res: any): any[] => {
+  const rows: any = res.rows;
+  return rows?._array || rows || [];
+};
+
 export const reparseStoredMessages = async (): Promise<{ updated: number; matched: number }> => {
   const res = await db.execute(
     `SELECT id, sender, sms_body, bank, merchant_raw, type, amount, needs_contact_match, card_id, original_currency
@@ -62,8 +67,19 @@ export const reparseStoredMessages = async (): Promise<{ updated: number; matche
     // A spend abroad stored before foreign amounts were understood holds a
     // rupee figure picked from elsewhere in the message, often the available
     // limit. Price it now, from the currency amount the message gave.
-    if (parsed.currency && parsed.currency !== 'INR' && !txn.original_currency) {
-      rates ??= await getExchangeRates();
+    // Not when it's been split or matched to a friend's payment: those were
+    // made from the stored amount, and changing it alone would leave them off.
+    const isForeign = parsed.currency && parsed.currency !== 'INR' && !txn.original_currency;
+    const shared =
+      isForeign &&
+      rowsOf(
+        await db.execute(
+          `SELECT 1 FROM splits WHERE transaction_id = ? UNION ALL SELECT 1 FROM settlements WHERE transaction_id = ? LIMIT 1`,
+          [txn.id, txn.id]
+        )
+      ).length > 0;
+    if (isForeign && !shared) {
+      rates ??= await getExchangeRates([parsed.currency]);
       if (!markupByCard) {
         const cardRows: any = (await db.execute('SELECT id, forex_markup FROM cards')).rows;
         markupByCard = new Map((cardRows?._array || cardRows || []).map((c: any) => [c.id, c.forex_markup]));
