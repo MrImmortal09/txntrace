@@ -23,7 +23,7 @@ import { openLocationInGoogleMaps } from '../utils/maps';
 import { isAwaitingRate } from '../services/exchangeRates';
 import { useTheme } from '../theme/ThemeProvider';
 import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
-import ContactListEmpty from '../components/ContactListEmpty';
+import ContactListEmpty, { LimitedContactsNote } from '../components/ContactListEmpty';
 
 const SWIPE_THRESHOLD = 100;
 
@@ -69,7 +69,12 @@ const ReviewScreen = () => {
   
   // Split state
   const [splitModalVisible, setSplitModalVisible] = useState(false);
-  const { contacts, allowed: contactsAllowed, retry: retryContacts } = useDeviceContacts(splitModalVisible);
+  const {
+    contacts,
+    allowed: contactsAllowed,
+    limited: contactsLimited,
+    retry: retryContacts,
+  } = useDeviceContacts(splitModalVisible);
   const [contactQuery, setContactQuery] = useState('');
   const [contactRecency, setContactRecency] = useState<Record<string, string>>({});
   const [selectedContacts, setSelectedContacts] = useState<SplitContact[]>([]);
@@ -621,6 +626,7 @@ const ReviewScreen = () => {
                 </View>
               );
             }}
+            ListHeaderComponent={<LimitedContactsNote limited={contactsLimited} />}
             ListEmptyComponent={<ContactListEmpty allowed={contactsAllowed} onAllow={retryContacts} />}
           />
         </SafeAreaView>

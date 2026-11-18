@@ -5,7 +5,7 @@ import { db } from '../db/schema';
 import { useTheme } from '../theme/ThemeProvider';
 import { createSplit, loadSplitRecency } from '../services/settlements';
 import { contactName, sortByRecentSplit, useDeviceContacts } from '../services/deviceContacts';
-import ContactListEmpty from './ContactListEmpty';
+import ContactListEmpty, { LimitedContactsNote } from './ContactListEmpty';
 
 interface SplitContact {
   id: string;
@@ -31,7 +31,7 @@ interface Props {
  */
 const SplitModal = ({ visible, transactionId, amount, onClose, onSaved }: Props) => {
   const { colors } = useTheme();
-  const { contacts, allowed, retry } = useDeviceContacts(visible);
+  const { contacts, allowed, limited, retry } = useDeviceContacts(visible);
   const [recency, setRecency] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<SplitContact[]>([]);
   const [query, setQuery] = useState('');
@@ -147,6 +147,7 @@ const SplitModal = ({ visible, transactionId, amount, onClose, onSaved }: Props)
               </View>
             );
           }}
+          ListHeaderComponent={<LimitedContactsNote limited={limited} />}
           ListEmptyComponent={<ContactListEmpty allowed={allowed} onAllow={retry} />}
         />
       </SafeAreaView>

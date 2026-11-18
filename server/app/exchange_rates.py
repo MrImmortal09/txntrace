@@ -117,3 +117,32 @@ def stored_rates() -> dict:
         "rates": {r["currency"]: r["inr_per_unit"] for r in rows},
         "fetched_at": max((r["fetched_at"] for r in rows), default=None),
     }
+
+
+def rates_overview() -> dict:
+    """Every currency the app understands, with its stored rate and whether
+    it's fresh, for the admin page. A currency with no row yet is listed too,
+    so a pair that keeps failing stands out."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT currency, inr_per_unit, fetched_at FROM exchange_rates").fetchall()
+    stored = {r["currency"]: r for r in rows}
+    cutoff = datetime.now(timezone.utc) - REFRESH_EVERY
+    currencies = []
+    for code in CURRENCIES:
+        row = stored.get(code)
+        fetched_at = row["fetched_at"] if row else None
+        if not row:
+            status = "missing"
+        elif fetched_at and datetime.fromisoformat(fetched_at) > cutoff:
+            status = "fresh"
+        else:
+            status = "stale"
+        currencies.append(
+            {"code": code, "rate": row["inr_per_unit"] if row else None, "fetched_at": fetched_at, "status": status}
+        )
+    return {
+        "currencies": currencies,
+        "api_key_set": bool(API_NINJAS_KEY),
+        "refresh_hours": int(REFRESH_EVERY.total_seconds() // 3600),
+        "check_minutes": CHECK_EVERY_SECONDS // 60,
+    }

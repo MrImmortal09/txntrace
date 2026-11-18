@@ -19,7 +19,7 @@ import random
 
 from .bank_styles import BANKS, FALLBACK, bank_style_for
 from .db import get_db, init_db
-from .exchange_rates import start_background_refresh, stored_rates
+from .exchange_rates import rates_overview, start_background_refresh, stored_rates
 from .parsing import parse_statement
 from .version import read_version_info
 
@@ -870,6 +870,18 @@ def admin_reports_page(request: Request, status: str = Query(default="open")):
             "counts": {"open": counts.get("open", 0), "resolved": counts.get("resolved", 0), "all": sum(counts.values())},
         },
     )
+
+
+@app.get("/admin/rates", response_class=HTMLResponse)
+def admin_rates_page(request: Request):
+    """The exchange rates the server holds, as the app gets them from
+    /api/exchange-rates, with when each was fetched from API Ninjas."""
+    user_id = web_admin(request)
+    if not isinstance(user_id, str):
+        return user_id
+    overview = rates_overview()
+    counts = {status: sum(1 for c in overview["currencies"] if c["status"] == status) for status in ("fresh", "stale", "missing")}
+    return templates.TemplateResponse(request, "admin_rates.html", {**overview, "counts": counts})
 
 
 @app.put("/api/admin/parse-reports/{report_id}")

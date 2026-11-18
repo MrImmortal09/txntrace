@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
 
 interface Props {
@@ -30,7 +30,30 @@ const ContactListEmpty = ({ allowed, onAllow }: Props) => {
   );
 };
 
+/**
+ * Shown above the list when iOS shares only some contacts ("Limited Access").
+ * The app can't widen that itself, so it says where to.
+ */
+export const LimitedContactsNote = ({ limited }: { limited: boolean }) => {
+  const { colors } = useTheme();
+  if (!limited) return null;
+  return (
+    <View style={[styles.note, { backgroundColor: colors.background, borderColor: colors.border }]}>
+      <Text style={[styles.noteText, { color: colors.textSecondary }]}>
+        TxnTrace can only see the contacts you chose to share. To add more, open Settings, tap Contacts, then
+        Edit Selected Contacts, or choose Full Access.
+      </Text>
+      <TouchableOpacity onPress={() => Linking.openSettings()} accessibilityRole="button">
+        <Text style={[styles.noteLink, { color: colors.primary }]}>Open Settings</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
+
 const styles = StyleSheet.create({
+  note: { borderWidth: 1, borderRadius: 10, padding: 12, margin: 12 },
+  noteText: { fontSize: 13, lineHeight: 18 },
+  noteLink: { fontSize: 14, fontWeight: '700', marginTop: 8 },
   box: { alignItems: 'center', marginTop: 40, paddingHorizontal: 32 },
   text: { textAlign: 'center', fontSize: 15, lineHeight: 21 },
   button: { marginTop: 16, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 20 },

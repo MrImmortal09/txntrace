@@ -27,6 +27,9 @@ export const sortByRecentSplit = (contacts: Contact[], recency: Record<string, s
 export const useDeviceContacts = (open: boolean) => {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  // iOS "Limited Access": only the contacts the user picked are visible, and
+  // the picker can't add more itself, so it points to Settings instead.
+  const [limited, setLimited] = useState(false);
   // Only the latest ask may set state; an answer for a picker that has since
   // closed is dropped.
   const latest = useRef(0);
@@ -37,16 +40,24 @@ export const useDeviceContacts = (open: boolean) => {
     // Never rejects: a failed request counts as not allowed.
     const granted = await requestContactsAccess();
     let list: Contact[] = [];
+    let isLimited = false;
     if (granted) {
       try {
         list = await Contacts.getAll();
       } catch (error) {
         console.error('Failed to load contacts:', error);
       }
+      // Separate, so a failed status check only loses the note, never the list.
+      try {
+        isLimited = (await Contacts.checkPermission()) === 'limited';
+      } catch {
+        isLimited = false;
+      }
     }
     if (ask !== latest.current) return;
     setContacts(list);
     setAllowed(granted);
+    setLimited(isLimited);
   }, []);
 
   useEffect(() => {
@@ -58,5 +69,5 @@ export const useDeviceContacts = (open: boolean) => {
     load();
   }, [open, load]);
 
-  return { contacts, allowed, retry: load };
+  return { contacts, allowed, limited, retry: load };
 };

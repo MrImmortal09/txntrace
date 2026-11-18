@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, SafeAreaView, TextInput } from 'react-native';
 import { contactName, useDeviceContacts } from '../services/deviceContacts';
 import { useTheme } from '../theme/ThemeProvider';
-import ContactListEmpty from './ContactListEmpty';
+import ContactListEmpty, { LimitedContactsNote } from './ContactListEmpty';
 
 export interface PickedContact {
   id: string;
@@ -18,7 +18,7 @@ interface Props {
 
 const ContactPickerModal = ({ visible, title, onCancel, onSelect }: Props) => {
   const { colors } = useTheme();
-  const { contacts, allowed, retry } = useDeviceContacts(visible);
+  const { contacts, allowed, limited, retry } = useDeviceContacts(visible);
   const [query, setQuery] = useState('');
 
   const filtered = query
@@ -54,6 +54,7 @@ const ContactPickerModal = ({ visible, title, onCancel, onSelect }: Props) => {
               <Text style={[styles.rowText, { color: colors.text }]}>{contactName(item)}</Text>
             </TouchableOpacity>
           )}
+          ListHeaderComponent={<LimitedContactsNote limited={limited} />}
           ListEmptyComponent={<ContactListEmpty allowed={allowed} onAllow={retry} />}
         />
       </SafeAreaView>

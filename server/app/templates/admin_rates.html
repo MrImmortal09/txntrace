@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Exchange rates · TxnTrace{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-bold text-gray-900">Exchange rates</h1>
+<p class="mt-1 text-sm text-gray-500">
+  INR per unit, fetched from API Ninjas. Each currency is fetched again once its rate is
+  {{ refresh_hours }} hours old; the server checks every {{ check_minutes }} minutes, so a failed one is
+  retried within the hour. The app gets exactly this list from <code class="rounded bg-gray-100 px-1.5 py-0.5 text-xs">/api/exchange-rates</code>
+  and adds each card's forex markup on top.
+</p>
+
+{% if not api_key_set %}
+<div class="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+  <strong>API_NINJAS_KEY isn't set</strong>, so no rates are being fetched. Add it to <code>server/.env</code> and restart the service.
+</div>
+{% endif %}
+
+<div class="mt-6 flex flex-wrap gap-2 text-sm font-medium">
+  <span class="rounded-full bg-green-100 px-3 py-1 text-green-800">{{ counts.fresh }} fresh</span>
+  {% if counts.stale %}<span class="rounded-full bg-amber-100 px-3 py-1 text-amber-800">{{ counts.stale }} due for refresh</span>{% endif %}
+  {% if counts.missing %}<span class="rounded-full bg-red-100 px-3 py-1 text-red-800">{{ counts.missing }} never fetched</span>{% endif %}
+</div>
+
+<div class="mt-4 overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
+  <table class="w-full text-left text-sm">
+    <thead class="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
+      <tr>
+        <th class="px-5 py-3">Currency</th>
+        <th class="px-5 py-3 text-right">₹ per unit</th>
+        <th class="px-5 py-3">Fetched</th>
+        <th class="px-5 py-3">Status</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for c in currencies %}
+      <tr>
+        <td class="px-5 py-3 font-mono font-semibold text-gray-900">{{ c.code }}</td>
+        <td class="px-5 py-3 text-right font-mono tabular-nums text-gray-900">
+          {% if c.rate is not none %}{{ "%.4f"|format(c.rate) if c.rate < 1 else "%.2f"|format(c.rate) }}{% else %}<span class="text-gray-400">—</span>{% endif %}
+        </td>
+        <td class="px-5 py-3 text-gray-600">
+          {% if c.fetched_at %}<time class="local-time" datetime="{{ c.fetched_at }}">{{ c.fetched_at }}</time>{% else %}<span class="text-gray-400">never</span>{% endif %}
+        </td>
+        <td class="px-5 py-3">
+          {% if c.status == "fresh" %}
+          <span class="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800">Fresh</span>
+          {% elif c.status == "stale" %}
+          <span class="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">Due for refresh</span>
+          {% else %}
+          <span class="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800">Never fetched</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+  document.querySelectorAll('.local-time').forEach((el) => {
+    const d = new Date(el.getAttribute('datetime'));
+    if (!isNaN(d)) el.textContent = d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  });
+</script>
+{% endblock %}

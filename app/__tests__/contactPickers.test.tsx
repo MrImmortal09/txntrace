@@ -12,8 +12,10 @@ jest.mock('../src/db/schema', () => ({
   db: { execute: jest.fn(async () => ({ rows: [] })) },
 }));
 
+let mockContactsStatus = 'authorized';
 jest.mock('react-native-contacts', () => ({
   getAll: jest.fn(async () => [{ recordID: 'c1', displayName: 'Priya Patel' }]),
+  checkPermission: jest.fn(async () => mockContactsStatus),
 }));
 
 jest.mock('../src/services/permissions', () => ({
@@ -82,4 +84,30 @@ test('reopening the picker shows nothing from last time while it asks again', as
 
   await act(async () => answer(true));
   expect(hasText(root, 'Priya Patel')).toBe(true);
+});
+
+test('with Limited Access, the picker says how to share more contacts', async () => {
+  const LIMITED = /only see the contacts you chose to share/;
+  const hasMatch = (root: ReactTestInstance, re: RegExp) =>
+    root.findAll(node => (node.type as unknown) === 'Text' && re.test(textOf(node))).length > 0;
+
+  askForContacts.mockResolvedValue(true);
+  mockContactsStatus = 'limited';
+  await act(async () => {
+    renderer = ReactTestRenderer.create(
+      <SplitModal visible transactionId="txn_1" amount={349} onClose={jest.fn()} onSaved={jest.fn()} />
+    );
+  });
+  expect(hasText(renderer!.root, 'Priya Patel')).toBe(true);
+  expect(hasMatch(renderer!.root, LIMITED)).toBe(true);
+  expect(hasText(renderer!.root, 'Open Settings')).toBe(true);
+
+  act(() => renderer!.unmount());
+  mockContactsStatus = 'authorized';
+  await act(async () => {
+    renderer = ReactTestRenderer.create(
+      <SplitModal visible transactionId="txn_1" amount={349} onClose={jest.fn()} onSaved={jest.fn()} />
+    );
+  });
+  expect(hasMatch(renderer!.root, LIMITED)).toBe(false);
 });
