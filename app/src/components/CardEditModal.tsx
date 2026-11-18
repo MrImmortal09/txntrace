@@ -48,6 +48,7 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
   const [statementDay, setStatementDay] = useState('');
   const [dueDay, setDueDay] = useState('');
   const [creditLimit, setCreditLimit] = useState('');
+  const [forexMarkup, setForexMarkup] = useState('');
   const [presetId, setPresetId] = useState<string | null>(null);
   const [program, setProgram] = useState<RewardProgram | null>(null);
   const [tierDrafts, setTierDrafts] = useState<TierDraft[]>([]);
@@ -63,6 +64,7 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
     setStatementDay(card?.statement_day ? String(card.statement_day) : '');
     setDueDay(card?.due_day ? String(card.due_day) : '');
     setCreditLimit(card?.credit_limit ? String(card.credit_limit) : '');
+    setForexMarkup(card?.forex_markup ? String(card.forex_markup) : '');
     setPresetId(card?.reward_preset || null);
     setProgram(card?.program || null);
     setTierDrafts(toDrafts(card?.program || null));
@@ -130,6 +132,7 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
     const sDay = numOrNull(statementDay);
     const dDay = dueDay.trim() ? numOrNull(dueDay) : null;
     const limit = creditLimit.trim() ? numOrNull(creditLimit) : null;
+    const markup = forexMarkup.trim() ? numOrNull(forexMarkup) : null;
 
     if (!name.trim()) return Alert.alert('Missing name', 'Give the card a name, e.g. "SBI Cashback".');
     // Accepts 2–6 digits: banks mask a different number of trailing digits in their SMS (e.g. "XX1234" vs "XXXXXX1234").
@@ -139,6 +142,9 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
     }
     if (dueDay.trim() && (!dDay || dDay < 1 || dDay > 31 || !Number.isInteger(dDay))) {
       return Alert.alert('Due date', 'Enter the payment due day of the month (1–31), or leave it empty.');
+    }
+    if (forexMarkup.trim() && (markup === null || markup < 0 || markup > 20)) {
+      return Alert.alert('Forex markup', 'Enter the markup as a percent between 0 and 20, e.g. 3.5, or leave it empty.');
     }
     const built = buildProgram();
     if (typeof built === 'string') return Alert.alert('Rewards', built);
@@ -155,6 +161,7 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
         due_day: dDay,
         reward_preset: presetId,
         program: built,
+        forex_markup: markup,
       });
       onSaved();
     } catch (e: any) {
@@ -237,6 +244,13 @@ const CardEditModal = ({ visible, card, onClose, onSaved }: Props) => {
 
           <Text style={[styles.label, { color: colors.textSecondary }]}>Credit limit (optional)</Text>
           <TextInput style={inputStyle} value={creditLimit} onChangeText={setCreditLimit} placeholder="₹" keyboardType="decimal-pad" placeholderTextColor={colors.textSecondary} />
+
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Forex markup % (optional)</Text>
+          <TextInput style={inputStyle} value={forexMarkup} onChangeText={setForexMarkup} placeholder="e.g. 3.5" keyboardType="decimal-pad" placeholderTextColor={colors.textSecondary} />
+          <Text style={[styles.help, { color: colors.textSecondary }]}>
+            Added to spends in another currency, on top of the day's exchange rate. Banks charge 18% GST on the markup,
+            so 3.5% really costs 4.13%: enter that to count the GST too. Changing it re-prices this card's past foreign spends.
+          </Text>
 
           <Text style={[styles.section, { color: colors.text }]}>Rewards</Text>
           <View style={styles.chips}>

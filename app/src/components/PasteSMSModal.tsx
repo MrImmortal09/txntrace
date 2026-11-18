@@ -290,7 +290,10 @@ const PasteSMSModal = ({ visible, onClose, onSuccess }: Props) => {
                             { color: preview.parsed.type === 'credit' ? colors.success : colors.danger },
                           ]}
                         >
-                          {preview.parsed.type === 'credit' ? '+' : '-'}₹{preview.parsed.amount.toFixed(2)}
+                          {preview.parsed.type === 'credit' ? '+' : '-'}
+                          {preview.parsed.currency && preview.parsed.currency !== 'INR'
+                            ? `${preview.parsed.currency} ${preview.parsed.amount.toFixed(2)}`
+                            : `₹${preview.parsed.amount.toFixed(2)}`}
                         </Text>
                         <View
                           style={[

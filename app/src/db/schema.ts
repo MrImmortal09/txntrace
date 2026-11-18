@@ -105,6 +105,17 @@ export const setupDatabase = async () => {
     // deliberately doesn't bump updated_at when writing it, so web sync
     // doesn't mistake it for a locally edited row.
     `ALTER TABLE transactions ADD COLUMN reward_tier TEXT;`,
+    // Percent a card adds to a foreign-currency spend (e.g. 3.5, or 4.13
+    // with GST). NULL counts as no markup.
+    `ALTER TABLE cards ADD COLUMN forex_markup REAL;`,
+    // A spend in another currency, as the message gave it, and the rate and
+    // markup it was converted at: amount = original_amount × fx_rate ×
+    // (1 + fx_markup / 100). fx_rate NULL means no rate was available yet and
+    // amount is 0 until convertPendingForeignAmounts fills it in.
+    `ALTER TABLE transactions ADD COLUMN original_currency TEXT;`,
+    `ALTER TABLE transactions ADD COLUMN original_amount REAL;`,
+    `ALTER TABLE transactions ADD COLUMN fx_rate REAL;`,
+    `ALTER TABLE transactions ADD COLUMN fx_markup REAL;`,
   ];
   for (const migration of cardMigrations) {
     try {

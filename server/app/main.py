@@ -18,6 +18,7 @@ import random
 
 from .bank_styles import BANKS, FALLBACK, bank_style_for
 from .db import get_db, init_db
+from .exchange_rates import start_background_refresh, stored_rates
 from .parsing import parse_statement
 from .version import read_version_info
 
@@ -33,6 +34,12 @@ VERSION_INFO: dict = {}
 JWT_SECRET = os.environ.get("JWT_SECRET", "txntrace_super_secret")
 WA_SERVER_URL = os.environ.get("WA_SERVER_URL")
 WA_API_KEY = os.environ.get("WA_API_KEY")
+
+# Who can open /admin/reports: comma-separated 10-digit phone numbers, the same
+# ones used to sign in. Unset means nobody, so a fresh deploy exposes nothing.
+ADMIN_USER_IDS = {
+    f"user_{phone.strip()}" for phone in os.environ.get("ADMIN_PHONES", "").split(",") if phone.strip()
+}
 
 security = HTTPBearer(auto_error=False)
 
@@ -136,11 +143,21 @@ def _startup() -> None:
     init_db()
     VERSION_INFO.update(read_version_info())
     templates.env.globals["version_info"] = VERSION_INFO
+    start_background_refresh()
 
 
 @app.get("/api/version")
 def api_version():
     return VERSION_INFO
+
+
+# Public, no sign-in: the rates are the same for everyone and the app needs them
+# to convert a foreign-currency spend even when it isn't signed in. Serves the
+# stored copy only; fetching from API Ninjas happens once a day in the
+# background (exchange_rates.py), however often this is called.
+@app.get("/api/exchange-rates")
+def api_exchange_rates():
+    return stored_rates()
 
 
 def _row_id(bank: str, row: dict[str, Any]) -> str:
@@ -663,6 +680,153 @@ def api_export_transactions(since: str | None = Query(default=None), user_id: st
     return {"transactions": [dict(r) for r in rows]}
 
 
+REPORT_REASON_LABELS = {
+    "not_transaction": "Not a transaction",
+    "wrong_amount": "Wrong amount",
+    "wrong_merchant": "Wrong merchant",
+    "wrong_type": "Debit / credit swapped",
+    "other": "Something else",
+}
+REPORT_STATUSES = ("open", "resolved")
+# A long bank SMS is a few hundred characters. The caps keep a misbehaving
+# client from filling the table with something that isn't one.
+MAX_REPORT_BODY = 4000
+MAX_REPORT_NOTE = 1000
+
+
+def _clip(value: Any, limit: int = 200) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text[:limit] or None
+
+
+def get_admin_user(user_id: str = Depends(get_current_user)) -> str:
+    # 404 rather than 403, so the admin API doesn't announce itself.
+    if user_id not in ADMIN_USER_IDS:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return user_id
+
+
+@app.post("/api/parse-reports")
+def api_create_parse_report(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
+    """The app's "Report a problem" action on a transaction. Reporting the same
+    message again replaces the earlier report and reopens it, so one message
+    is never in the list twice."""
+    body = (payload.get("sms_body") or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="There's no message to report.")
+    if len(body) > MAX_REPORT_BODY:
+        raise HTTPException(status_code=413, detail="That message is too long to report.")
+    reason = payload.get("reason") if payload.get("reason") in REPORT_REASON_LABELS else "other"
+    parsed = payload.get("parsed")
+    if not isinstance(parsed, dict):
+        parsed = {}
+    try:
+        amount = float(parsed["amount"]) if parsed.get("amount") is not None else None
+    except (TypeError, ValueError):
+        amount = None
+
+    report_id = "rep_" + hashlib.sha256(f"{user_id}|{body}".encode()).hexdigest()[:24]
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO parse_reports
+               (id, user_id, transaction_id, sender, sms_body, parsed_bank, parsed_amount, parsed_type,
+                parsed_merchant, parsed_date, reason, note, app_version, platform, status, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open', %s)
+               ON CONFLICT (id) DO UPDATE SET
+                 transaction_id = EXCLUDED.transaction_id,
+                 sender = EXCLUDED.sender,
+                 parsed_bank = EXCLUDED.parsed_bank,
+                 parsed_amount = EXCLUDED.parsed_amount,
+                 parsed_type = EXCLUDED.parsed_type,
+                 parsed_merchant = EXCLUDED.parsed_merchant,
+                 parsed_date = EXCLUDED.parsed_date,
+                 reason = EXCLUDED.reason,
+                 note = EXCLUDED.note,
+                 app_version = EXCLUDED.app_version,
+                 platform = EXCLUDED.platform,
+                 status = 'open',
+                 created_at = EXCLUDED.created_at""",
+            (
+                report_id,
+                user_id,
+                _clip(payload.get("transaction_id")),
+                _clip(payload.get("sender")),
+                body,
+                _clip(parsed.get("bank")),
+                amount,
+                _clip(parsed.get("type"), 20),
+                _clip(parsed.get("merchant")),
+                _clip(parsed.get("date"), 40),
+                reason,
+                _clip(payload.get("note"), MAX_REPORT_NOTE),
+                _clip(payload.get("app_version"), 40),
+                _clip(payload.get("platform"), 40),
+                now,
+            ),
+        )
+    return {"id": report_id}
+
+
+@app.get("/admin/reports", response_class=HTMLResponse)
+def admin_reports_page(request: Request, status: str = Query(default="open")):
+    user_id = get_web_user(request)
+    if not user_id:
+        return RedirectResponse("/login?next=/admin/reports")
+    if user_id not in ADMIN_USER_IDS:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if status not in (*REPORT_STATUSES, "all"):
+        status = "open"
+    with get_db() as conn:
+        counts = {
+            r["status"]: r["count"]
+            for r in conn.execute("SELECT status, COUNT(*) AS count FROM parse_reports GROUP BY status").fetchall()
+        }
+        if status == "all":
+            rows = conn.execute("SELECT * FROM parse_reports ORDER BY created_at DESC LIMIT 500").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM parse_reports WHERE status = %s ORDER BY created_at DESC LIMIT 500", (status,)
+            ).fetchall()
+    reports = []
+    for r in rows:
+        report = dict(r)
+        report["reason_label"] = REPORT_REASON_LABELS.get(report["reason"], report["reason"] or "Something else")
+        reports.append(report)
+    return templates.TemplateResponse(
+        request,
+        "admin_reports.html",
+        {
+            "reports": reports,
+            "status": status,
+            "counts": {"open": counts.get("open", 0), "resolved": counts.get("resolved", 0), "all": sum(counts.values())},
+        },
+    )
+
+
+@app.put("/api/admin/parse-reports/{report_id}")
+def api_update_parse_report(report_id: str, payload: dict[str, Any], _: str = Depends(get_admin_user)):
+    status = payload.get("status")
+    if status not in REPORT_STATUSES:
+        raise HTTPException(status_code=400, detail="status must be 'open' or 'resolved'.")
+    with get_db() as conn:
+        cur = conn.execute("UPDATE parse_reports SET status = %s WHERE id = %s", (status, report_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Report not found.")
+    return {"updated": True}
+
+
+@app.delete("/api/admin/parse-reports/{report_id}")
+def api_delete_parse_report(report_id: str, _: str = Depends(get_admin_user)):
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM parse_reports WHERE id = %s", (report_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Report not found.")
+    return {"deleted": True}
+
+
 @app.post("/api/admin/clear-db")
 async def api_clear_db(payload: dict[str, Any], user_id: str = Depends(get_current_user)):
     """Wipes every table for the user — transactions, cards, contacts, splits.
@@ -676,6 +840,7 @@ async def api_clear_db(payload: dict[str, Any], user_id: str = Depends(get_curre
         conn.execute("DELETE FROM cards WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM reward_entries WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM card_statements WHERE user_id = %s", (user_id,))
+        conn.execute("DELETE FROM parse_reports WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
     return {"cleared": True}
 
@@ -686,7 +851,16 @@ def api_delete_account(user_id: str = Depends(get_current_user)):
     user and then the user, all in one transaction. Unlike clear-db the
     users row goes too, so the account's token stops working."""
     with get_db() as conn:
-        for table in ("splits", "settlements", "contacts", "cards", "reward_entries", "card_statements", "transactions"):
+        for table in (
+            "splits",
+            "settlements",
+            "contacts",
+            "cards",
+            "reward_entries",
+            "card_statements",
+            "parse_reports",
+            "transactions",
+        ):
             conn.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,))
         conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
     return {"deleted": True}
@@ -785,6 +959,10 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                 t.get("latitude"),
                 t.get("longitude"),
                 t.get("reward_tier"),
+                t.get("original_currency"),
+                t.get("original_amount"),
+                t.get("fx_rate"),
+                t.get("fx_markup"),
                 user_id,
             )
             for t in transactions
@@ -795,8 +973,10 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                 """INSERT INTO transactions
                    (id, bank, amount, type, merchant_raw, date, source, category, note,
                     reviewed, created_at, updated_at, reference, account_last4, balance,
-                    sender, sms_body, card_id, needs_contact_match, location, latitude, longitude, reward_tier, user_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    sender, sms_body, card_id, needs_contact_match, location, latitude, longitude, reward_tier,
+                    original_currency, original_amount, fx_rate, fx_markup, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                      bank = EXCLUDED.bank,
                      amount = EXCLUDED.amount,
@@ -820,6 +1000,10 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                      latitude = EXCLUDED.latitude,
                      longitude = EXCLUDED.longitude,
                      reward_tier = EXCLUDED.reward_tier,
+                     original_currency = EXCLUDED.original_currency,
+                     original_amount = EXCLUDED.original_amount,
+                     fx_rate = EXCLUDED.fx_rate,
+                     fx_markup = EXCLUDED.fx_markup,
                      user_id = EXCLUDED.user_id
                    WHERE transactions.user_id = EXCLUDED.user_id OR transactions.user_id IS NULL""",
                 tx_records,
@@ -918,6 +1102,7 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                 c.get("reward_preset"),
                 c.get("reward_program"),
                 c.get("origin"),
+                c.get("forex_markup"),
                 user_id,
             )
             for c in cards
@@ -927,8 +1112,8 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
             cur.executemany(
                 """INSERT INTO cards
                    (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at,
-                    statement_day, due_day, reward_preset, reward_program, origin, user_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    statement_day, due_day, reward_preset, reward_program, origin, forex_markup, user_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (id) DO UPDATE SET
                      name = EXCLUDED.name,
                      bank = EXCLUDED.bank,
@@ -941,6 +1126,7 @@ def api_backup_upload(payload: dict[str, Any], user_id: str = Depends(get_curren
                      reward_preset = EXCLUDED.reward_preset,
                      reward_program = EXCLUDED.reward_program,
                      origin = EXCLUDED.origin,
+                     forex_markup = EXCLUDED.forex_markup,
                      user_id = EXCLUDED.user_id
                    WHERE cards.user_id = EXCLUDED.user_id OR cards.user_id IS NULL""",
                 card_records,

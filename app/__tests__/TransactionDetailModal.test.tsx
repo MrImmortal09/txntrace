@@ -32,6 +32,12 @@ jest.mock('../src/utils/maps', () => ({
   openLocationInGoogleMaps: jest.fn(),
 }));
 
+// The real module pulls in the native SQLite module.
+jest.mock('../src/services/webSync', () => ({
+  getAuthToken: jest.fn(async () => 'token'),
+  reportParseProblem: jest.fn(async () => {}),
+}));
+
 // The real service pulls in the native SQLite module.
 jest.mock('../src/services/creditCards', () => {
   const { findPreset, clonePresetProgram } = jest.requireActual('../src/services/rewards/presets');
@@ -231,5 +237,92 @@ describe('TransactionDetailModal Hold to Copy', () => {
       (n: any) => n.props.accessibilityLabel && String(n.props.accessibilityLabel).startsWith('Reward tier:')
     );
     expect(rows.length).toBe(0);
+  });
+});
+
+describe('TransactionDetailModal parse report', () => {
+  const { reportParseProblem, getAuthToken } = jest.requireMock('../src/services/webSync');
+  const { Alert } = jest.requireActual('react-native');
+
+  const dueReminder: TransactionRow = {
+    id: 'sms_due',
+    bank: 'ICICI Bank',
+    amount: 36483,
+    type: 'debit',
+    merchant_raw: 'Unknown ICICI Merchant',
+    date: '2026-11-08T10:00:00.000Z',
+    source: 'sms',
+    category: null,
+    note: null,
+    reference: null,
+    account_last4: null,
+    balance: null,
+    sender: 'AX-ICICIT',
+    sms_body: 'Total Amount of INR 36,483.00 is due on ICICI Bank Credit Card XX5008. Please ignore if paid.',
+    card_id: null,
+  };
+
+  const render = async (txn: TransactionRow) => {
+    let renderer: any;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TransactionDetailModal transaction={txn} onClose={jest.fn()} />);
+      await Promise.resolve();
+    });
+    return renderer.root;
+  };
+  const press = async (node: any) => {
+    await ReactTestRenderer.act(async () => {
+      await node.props.onPress();
+    });
+  };
+  const byLabel = (root: any, label: string) => root.find((n: any) => n.props.accessibilityLabel === label);
+  const buttonWithText = (root: any, text: string) =>
+    root.find(
+      (n: any) =>
+        typeof n.props.onPress === 'function' &&
+        n.findAllByType('Text').some((t: any) => [t.props.children].flat().join('') === text)
+    );
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  });
+
+  test('sends the message, what was read from it, and the chosen reason', async () => {
+    const root = await render(dueReminder);
+    await press(byLabel(root, 'Report that this message was read wrong'));
+    await press(buttonWithText(root, 'Not a transaction'));
+    await press(buttonWithText(root, 'Send report'));
+
+    expect(reportParseProblem).toHaveBeenCalledWith({
+      transactionId: 'sms_due',
+      sender: 'AX-ICICIT',
+      smsBody: dueReminder.sms_body,
+      parsed: { bank: 'ICICI Bank', amount: 36483, type: 'debit', merchant: 'Unknown ICICI Merchant', date: dueReminder.date },
+      reason: 'not_transaction',
+      note: null,
+    });
+  });
+
+  test('asks to sign in instead of opening the form when signed out', async () => {
+    getAuthToken.mockResolvedValueOnce(null);
+    const root = await render(dueReminder);
+    await press(byLabel(root, 'Report that this message was read wrong'));
+
+    expect(Alert.alert).toHaveBeenCalledWith('Sign in to send reports', expect.any(String));
+    expect(root.findAll((n: any) => n.props.children === 'Send report')).toHaveLength(0);
+  });
+
+  test('shows the original currency and rate for a foreign spend', async () => {
+    const root = await render({
+      ...dueReminder,
+      amount: 93.15,
+      original_currency: 'USD',
+      original_amount: 1,
+      fx_rate: 90,
+      fx_markup: 3.5,
+    });
+    const texts = root.findAllByType('Text').map((t: any) => [t.props.children].flat().join('')).join(' | ');
+    expect(texts).toContain('USD 1.00 at ₹90.00 + 3.5% card markup');
   });
 });

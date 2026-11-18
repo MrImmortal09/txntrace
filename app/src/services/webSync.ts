@@ -1,4 +1,6 @@
 import { SERVER_URL as SERVER_URL_DEFAULT } from '@env';
+import { Platform } from 'react-native';
+import { version as APP_VERSION } from '../../package.json';
 import { db } from '../db/schema';
 import { deleteSettings, getSetting, setSetting } from './appSettings';
 
@@ -44,6 +46,64 @@ const request = async (url: string, init: RequestInit = {}, timeoutMs = REQUEST_
     throw e;
   } finally {
     clearTimeout(timer);
+  }
+};
+
+export interface ExchangeRates {
+  /** INR per one unit of each currency. */
+  rates: Record<string, number>;
+  fetched_at: string | null;
+}
+
+/** The server's daily copy of foreign-currency rates. Public: works signed out too. */
+export const fetchExchangeRates = async (timeoutMs = 10_000): Promise<ExchangeRates> => {
+  const baseUrl = await getServerUrl();
+  const res = await request(`${baseUrl}/api/exchange-rates`, {}, timeoutMs);
+  if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+  const data = await res.json();
+  if (!data || typeof data.rates !== 'object') throw new Error('Malformed exchange-rate response.');
+  return { rates: data.rates, fetched_at: data.fetched_at ?? null };
+};
+
+export type ParseReportReason = 'not_transaction' | 'wrong_amount' | 'wrong_merchant' | 'wrong_type' | 'other';
+
+export interface ParseReport {
+  transactionId: string;
+  sender: string | null;
+  smsBody: string;
+  parsed: { bank: string | null; amount: number; type: string; merchant: string | null; date: string };
+  reason: ParseReportReason;
+  note: string | null;
+}
+
+/**
+ * Sends one message the user flagged as read wrong, with what the app read
+ * from it, to the server's report list (see /admin/reports there). Only ever
+ * called from the Report button, one message at a time.
+ */
+export const reportParseProblem = async (report: ParseReport): Promise<void> => {
+  const baseUrl = await getServerUrl();
+  const headers = await getAuthHeaders();
+  const res = await request(`${baseUrl}/api/parse-reports`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({
+      transaction_id: report.transactionId,
+      sender: report.sender,
+      sms_body: report.smsBody,
+      parsed: report.parsed,
+      reason: report.reason,
+      note: report.note,
+      app_version: APP_VERSION,
+      platform: `${Platform.OS} ${Platform.Version}`,
+    }),
+  }, 20_000);
+  if (res.status === 401) {
+    throw new Error('Your sign-in has expired. Sign in again under Settings → Cloud Backup & Sync, then send the report.');
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Server responded with ${res.status}`);
   }
 };
 
@@ -106,6 +166,10 @@ interface RemoteTransaction {
   latitude?: number | null;
   longitude?: number | null;
   reward_tier?: string | null;
+  original_currency?: string | null;
+  original_amount?: number | null;
+  fx_rate?: number | null;
+  fx_markup?: number | null;
 }
 
 /**
@@ -136,8 +200,9 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
     const updatedAt = txn.updated_at || txn.created_at;
     const query = fullPull
       ? `INSERT INTO transactions
-          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude, reward_tier)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude, reward_tier,
+           original_currency, original_amount, fx_rate, fx_markup)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            bank = excluded.bank,
            amount = excluded.amount,
@@ -160,10 +225,15 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
            location = excluded.location,
            latitude = excluded.latitude,
            longitude = excluded.longitude,
-           reward_tier = COALESCE(excluded.reward_tier, transactions.reward_tier)`
+           reward_tier = COALESCE(excluded.reward_tier, transactions.reward_tier),
+           original_currency = COALESCE(excluded.original_currency, transactions.original_currency),
+           original_amount = COALESCE(excluded.original_amount, transactions.original_amount),
+           fx_rate = COALESCE(excluded.fx_rate, transactions.fx_rate),
+           fx_markup = COALESCE(excluded.fx_markup, transactions.fx_markup)`
       : `INSERT INTO transactions
-          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude, reward_tier)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, bank, amount, type, merchant_raw, date, source, category, note, reviewed, created_at, updated_at, reference, account_last4, balance, sender, sms_body, needs_contact_match, card_id, location, latitude, longitude, reward_tier,
+           original_currency, original_amount, fx_rate, fx_markup)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            bank = excluded.bank,
            amount = excluded.amount,
@@ -184,7 +254,11 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
            card_id = excluded.card_id,
            location = excluded.location,
            latitude = excluded.latitude,
-           longitude = excluded.longitude
+           longitude = excluded.longitude,
+           original_currency = COALESCE(excluded.original_currency, transactions.original_currency),
+           original_amount = COALESCE(excluded.original_amount, transactions.original_amount),
+           fx_rate = COALESCE(excluded.fx_rate, transactions.fx_rate),
+           fx_markup = COALESCE(excluded.fx_markup, transactions.fx_markup)
          WHERE excluded.updated_at > COALESCE(transactions.updated_at, transactions.created_at, '')`;
 
     const result = await db.execute(query, [
@@ -211,6 +285,10 @@ export const syncFromServer = async (fullPull = false): Promise<{ imported: numb
       txn.latitude ?? null,
       txn.longitude ?? null,
       txn.reward_tier ?? null,
+      txn.original_currency ?? null,
+      txn.original_amount ?? null,
+      txn.fx_rate ?? null,
+      txn.fx_markup ?? null,
     ]);
     imported += result.rowsAffected;
     if (!latestUpdatedAt || updatedAt > latestUpdatedAt) latestUpdatedAt = updatedAt;
@@ -234,6 +312,7 @@ interface RemoteCard {
   reward_preset?: string | null;
   reward_program?: string | null;
   origin?: string | null;
+  forex_markup?: number | null;
 }
 
 /**
@@ -264,13 +343,14 @@ export const syncCardsFromServer = async (fullPull = false): Promise<{ count: nu
          statement_day = COALESCE(excluded.statement_day, cards.statement_day),
          due_day = COALESCE(excluded.due_day, cards.due_day),
          reward_preset = COALESCE(excluded.reward_preset, cards.reward_preset),
-         reward_program = COALESCE(excluded.reward_program, cards.reward_program)`
+         reward_program = COALESCE(excluded.reward_program, cards.reward_program),
+         forex_markup = COALESCE(excluded.forex_markup, cards.forex_markup)`
     : '';
   for (const card of remote) {
     await db.execute(
       `INSERT INTO cards (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at,
-                          statement_day, due_day, reward_preset, reward_program, origin)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'web'))
+                          statement_day, due_day, reward_preset, reward_program, origin, forex_markup)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'web'), ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          bank = excluded.bank,
@@ -292,6 +372,7 @@ export const syncCardsFromServer = async (fullPull = false): Promise<{ count: nu
         card.reward_preset ?? null,
         card.reward_program ?? null,
         card.origin ?? null,
+        card.forex_markup ?? null,
       ]
     );
   }

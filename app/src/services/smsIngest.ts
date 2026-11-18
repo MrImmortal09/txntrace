@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import SharedSMSStore from 'shared-sms-store';
 import { processSMSBatch, ingestManualSMS, previewParsedSMS } from '../parsers/sms';
+import { convertPendingForeignAmounts } from './exchangeRates';
 
 export { ingestManualSMS, previewParsedSMS };
 
@@ -29,6 +30,9 @@ export const checkNewMessages = async (): Promise<{ error: string | null; count:
           count = messages.length;
         }
       }
+      // Foreign spends that arrived while no exchange rate was known sit at ₹0
+      // until a rate turns up. Separate catch: a rate failure isn't a message failure.
+      await convertPendingForeignAmounts().catch(e => console.warn('Could not price foreign spends:', e));
       return { error: null, count };
     } catch (error: any) {
       console.error('Error reading SMS store:', error);

@@ -20,6 +20,8 @@ import { getTransactionReward, setTransactionRewardTier, TransactionRewardInfo }
 import { formatAcceleratedSplit, formatTierRate, formatUnits } from '../services/rewards/engine';
 import RewardTierPicker from './RewardTierPicker';
 import TransactionEditForm from './TransactionEditForm';
+import ReportParseForm from './ReportParseForm';
+import { getAuthToken } from '../services/webSync';
 
 export interface TransactionRow {
   id: string;
@@ -40,7 +42,20 @@ export interface TransactionRow {
   location?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  original_currency?: string | null;
+  original_amount?: number | null;
+  fx_rate?: number | null;
+  fx_markup?: number | null;
 }
+
+/** "USD 1.00 at ₹93.47 + 3.5% markup", for a spend made in another currency. */
+const foreignAmountLine = (t: TransactionRow): string | null => {
+  if (!t.original_currency || t.original_amount === null || t.original_amount === undefined) return null;
+  const original = `${t.original_currency} ${t.original_amount.toFixed(2)}`;
+  if (!t.fx_rate) return `${original} · waiting for an exchange rate`;
+  const markup = t.fx_markup ? ` + ${t.fx_markup}% card markup` : ' · no card markup set';
+  return `${original} at ₹${t.fx_rate.toFixed(2)}${markup}`;
+};
 
 interface Props {
   transaction: TransactionRow | null;
@@ -127,6 +142,7 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
   const { colors } = useTheme();
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const dirtyRef = useRef(false);
   const trackDirty = useCallback((dirty: boolean) => {
     dirtyRef.current = dirty;
@@ -146,10 +162,21 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
   const transactionId = transaction?.id;
   useEffect(() => {
     setEditing(false);
+    setReporting(false);
     dirtyRef.current = false;
   }, [transactionId]);
 
   if (!transaction) return null;
+
+  // Reports go to the server under the user's account, so they need sign-in;
+  // say so up front rather than after they've filled the form in.
+  const startReport = async () => {
+    if (await getAuthToken()) return setReporting(true);
+    Alert.alert(
+      'Sign in to send reports',
+      'Reports are sent to the developer under your account. Sign in under Settings → Cloud Backup & Sync, then try again.'
+    );
+  };
 
   const stopEditing = () => {
     dirtyRef.current = false;
@@ -218,15 +245,15 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
       visible={!!transaction}
       animationType="fade"
       transparent
-      // Android back steps out of editing before it closes the sheet.
-      onRequestClose={() => (editing ? leaveEdit(stopEditing) : onClose())}
+      // Android back steps out of editing or reporting before it closes the sheet.
+      onRequestClose={() => (editing ? leaveEdit(stopEditing) : reporting ? setReporting(false) : onClose())}
     >
       <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {/* While editing, a tap outside only puts the keyboard away. */}
         <TouchableOpacity
           style={styles.backdrop}
           activeOpacity={1}
-          onPress={() => (editing ? Keyboard.dismiss() : onClose())}
+          onPress={() => (editing || reporting ? Keyboard.dismiss() : onClose())}
         />
         <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: colors.cardShadow }]}>
           {/* Header with Merchant Name */}
@@ -244,7 +271,7 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
             </TouchableOpacity>
 
             <View style={styles.headerActions}>
-              {onEdited && !editing ? (
+              {onEdited && !editing && !reporting ? (
                 <TouchableOpacity
                   style={[styles.editButton, { borderColor: colors.border }]}
                   onPress={() => setEditing(true)}
@@ -275,6 +302,10 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
             </Text>
           </TouchableOpacity>
 
+          {foreignAmountLine(transaction) ? (
+            <Text style={[styles.foreign, { color: colors.textSecondary }]}>{foreignAmountLine(transaction)}</Text>
+          ) : null}
+
           {/* Date (Hold to copy) */}
           {formattedDate ? (
             <TouchableOpacity
@@ -290,7 +321,7 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
           ) : null}
 
           {/* Location */}
-          {transaction.location && !editing ? (
+          {transaction.location && !editing && !reporting ? (
             <TouchableOpacity
               style={[styles.locationCard, { backgroundColor: colors.background, borderColor: colors.border }]}
               onPress={() => openLocationInGoogleMaps(transaction.location, transaction.latitude, transaction.longitude)}
@@ -305,7 +336,9 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
             </TouchableOpacity>
           ) : null}
 
-          {editing ? (
+          {reporting ? (
+            <ReportParseForm transaction={transaction} onCancel={() => setReporting(false)} onSent={() => setReporting(false)} />
+          ) : editing ? (
             <TransactionEditForm
               transaction={transaction}
               onCancel={stopEditing}
@@ -343,6 +376,24 @@ const TransactionDetailModal = ({ transaction, onClose, onEdited }: Props) => {
                     {transaction.sms_body}
                   </Text>
                 </TouchableOpacity>
+              ) : null}
+
+              {transaction.sms_body ? (
+                <TouchableOpacity
+                  style={styles.reportLink}
+                  onPress={startReport}
+                  accessibilityRole="button"
+                  accessibilityLabel="Report that this message was read wrong"
+                >
+                  <Text style={[styles.reportLinkText, { color: colors.primary }]}>Read this wrong? Report it</Text>
+                </TouchableOpacity>
+              ) : transaction.source === 'statement' ? (
+                <View style={[styles.messageCard, { backgroundColor: colors.background, borderColor: colors.border }]}>
+                  <Text style={[styles.messageCardLabel, { color: colors.textSecondary }]}>Source</Text>
+                  <Text style={[styles.messageCardBody, styles.sourceBody, { color: colors.text }]}>
+                    Imported from a bank statement, so there’s no message for it.
+                  </Text>
+                </View>
               ) : null}
 
               {/* Other Transaction Details (Hold to copy any row) */}
@@ -424,6 +475,10 @@ const styles = StyleSheet.create({
   closeButton: { fontSize: 18, padding: 4 },
   amount: { fontSize: 32, fontWeight: 'bold', marginTop: 12 },
   date: { fontSize: 14, marginTop: 4, marginBottom: 12 },
+  foreign: { fontSize: 13, fontWeight: '500', marginTop: 4 },
+  reportLink: { alignSelf: 'flex-start', marginTop: -6, marginBottom: 12, paddingVertical: 4 },
+  reportLinkText: { fontSize: 13, fontWeight: '600' },
+  sourceBody: { marginTop: 6 },
   locationCard: {
     flexDirection: 'row',
     alignItems: 'center',

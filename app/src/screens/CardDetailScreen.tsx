@@ -5,6 +5,7 @@ import { useTheme } from '../theme/ThemeProvider';
 import CardEditModal from '../components/CardEditModal';
 import AmountPromptModal from '../components/AmountPromptModal';
 import RewardTierPicker from '../components/RewardTierPicker';
+import TransactionDetailModal, { TransactionRow } from '../components/TransactionDetailModal';
 import {
   CreditCard,
   addRewardEntry,
@@ -12,6 +13,7 @@ import {
   getCardOverview,
   getCreditCard,
   loadRewardEntries,
+  loadTransaction,
   setReceivedReward,
   setStatementAmount,
   setTransactionRewardTier,
@@ -54,6 +56,7 @@ const CardDetailScreen = () => {
   const [editing, setEditing] = useState(false);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [pickerTxn, setPickerTxn] = useState<RewardTxn | null>(null);
+  const [detailTxn, setDetailTxn] = useState<TransactionRow | null>(null);
 
   const load = useCallback(async () => {
     const next = await getCreditCard(cardId);
@@ -123,6 +126,15 @@ const CardDetailScreen = () => {
         },
       },
     ]);
+  };
+
+  const openTxn = async (id: string) => {
+    try {
+      const row = await loadTransaction(id);
+      if (row) setDetailTxn(row);
+    } catch (e) {
+      console.error('Failed to load transaction:', e);
+    }
   };
 
   const pickTier = async (tierId: string | null) => {
@@ -382,7 +394,14 @@ const CardDetailScreen = () => {
                   const capped = reward && reward.units < reward.uncappedUnits;
                   const split = tier && program && reward ? formatAcceleratedSplit(program, tier, reward) : null;
                   return (
-                    <View key={txn.id} style={[styles.txn, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <TouchableOpacity
+                      key={txn.id}
+                      style={[styles.txn, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                      activeOpacity={0.7}
+                      onPress={() => openTxn(txn.id)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${txn.merchant_raw || 'Transaction'}, ${formatRupees(txn.amount, 2)}. Tap for the message and reward tier.`}
+                    >
                       <View style={styles.txnTop}>
                         <View style={styles.txnMain}>
                           <Text style={[styles.txnMerchant, { color: colors.text }]} numberOfLines={1}>
@@ -414,7 +433,7 @@ const CardDetailScreen = () => {
                         </TouchableOpacity>
                       ) : null}
                       {split ? <Text style={[styles.splitText, { color: colors.success }]}>{split}</Text> : null}
-                    </View>
+                    </TouchableOpacity>
                   );
                 })}
               </>
@@ -443,6 +462,16 @@ const CardDetailScreen = () => {
         isExplicit={!!pickerTxn?.reward_tier}
         onSelect={pickTier}
         onClose={() => setPickerTxn(null)}
+      />
+
+      <TransactionDetailModal
+        transaction={detailTxn}
+        onEdited={updated => setDetailTxn(updated)}
+        onClose={() => {
+          setDetailTxn(null);
+          // The sheet can change the reward tier, which moves this cycle's totals.
+          load();
+        }}
       />
 
       <AmountPromptModal

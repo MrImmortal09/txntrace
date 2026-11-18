@@ -1,12 +1,12 @@
-import { extractAmount, extractMerchant, isDebitTransaction, isCreditTransaction } from './utils';
+import { extractTransactionAmount, extractMerchant, isDebitTransaction, isCreditTransaction } from './utils';
 
 export const canHandle = (sender: string): boolean => {
   return sender.toUpperCase().includes('HDFC');
 };
 
 export const parseSms = (body: string, timestamp: string) => {
-  const amount = extractAmount(body);
-  if (amount === null) return null;
+  const money = extractTransactionAmount(body);
+  if (money === null) return null;
 
   const isDebit = isDebitTransaction(body);
   const isCredit = isCreditTransaction(body);
@@ -25,7 +25,8 @@ export const parseSms = (body: string, timestamp: string) => {
   }
 
   return {
-    amount,
+    amount: money.amount,
+    currency: money.currency,
     type: isDebit ? 'debit' : 'credit',
     merchant: merchant,
     date: timestamp,

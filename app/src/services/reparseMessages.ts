@@ -1,6 +1,7 @@
 import { db } from '../db/schema';
 import { routeSms, parseAnySms, looksLikeBankSms } from '../parsers/sms';
 import { findAliasForName, applySettlement, looksLikePersonName } from './settlements';
+import { getExchangeRates, priceInRupees } from './exchangeRates';
 
 interface StoredSmsTxn {
   id: string;
@@ -11,6 +12,8 @@ interface StoredSmsTxn {
   type: string;
   amount: number;
   needs_contact_match: number;
+  card_id: string | null;
+  original_currency: string | null;
 }
 
 /**
@@ -29,7 +32,7 @@ interface StoredSmsTxn {
  */
 export const reparseStoredMessages = async (): Promise<{ updated: number; matched: number }> => {
   const res = await db.execute(
-    `SELECT id, sender, sms_body, bank, merchant_raw, type, amount, needs_contact_match
+    `SELECT id, sender, sms_body, bank, merchant_raw, type, amount, needs_contact_match, card_id, original_currency
      FROM transactions WHERE source = 'sms' AND sms_body IS NOT NULL AND sms_body != ''`
   );
   const rows: any = res.rows;
@@ -38,6 +41,9 @@ export const reparseStoredMessages = async (): Promise<{ updated: number; matche
   let updated = 0;
   let matched = 0;
   const now = () => new Date().toISOString();
+  // Loaded only if a stored message turns out to be a foreign-currency spend.
+  let rates: Record<string, number> | null = null;
+  let markupByCard: Map<string, number | null> | null = null;
 
   for (const txn of arr) {
     const sender = txn.sender || '';
@@ -52,6 +58,26 @@ export const reparseStoredMessages = async (): Promise<{ updated: number; matche
       (looksLikeBankSms(body) ? parseAnySms(body, now()) : null);
     if (!parsed) continue;
 
+    let amountFixed = false;
+    // A spend abroad stored before foreign amounts were understood holds a
+    // rupee figure picked from elsewhere in the message, often the available
+    // limit. Price it now, from the currency amount the message gave.
+    if (parsed.currency && parsed.currency !== 'INR' && !txn.original_currency) {
+      rates ??= await getExchangeRates();
+      if (!markupByCard) {
+        const cardRows: any = (await db.execute('SELECT id, forex_markup FROM cards')).rows;
+        markupByCard = new Map((cardRows?._array || cardRows || []).map((c: any) => [c.id, c.forex_markup]));
+      }
+      const price = priceInRupees(parsed.amount, parsed.currency, rates, txn.card_id ? markupByCard.get(txn.card_id) : null);
+      await db.execute(
+        `UPDATE transactions SET amount = ?, original_currency = ?, original_amount = ?, fx_rate = ?, fx_markup = ?,
+           updated_at = ? WHERE id = ?`,
+        [price.amount, price.original_currency, price.original_amount, price.fx_rate, price.fx_markup, now(), txn.id]
+      );
+      updated++;
+      amountFixed = true;
+    }
+
     if (parsed.bank === txn.bank && parsed.merchant === txn.merchant_raw) continue;
 
     await db.execute('UPDATE transactions SET bank = ?, merchant_raw = ?, updated_at = ? WHERE id = ?', [
@@ -60,7 +86,7 @@ export const reparseStoredMessages = async (): Promise<{ updated: number; matche
       now(),
       txn.id,
     ]);
-    updated++;
+    if (!amountFixed) updated++;
 
     if (txn.type !== 'credit') continue;
 

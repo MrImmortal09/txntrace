@@ -94,7 +94,10 @@
         
         const data = await res.json();
         document.cookie = `txntrace_token=${data.token}; path=/; max-age=31536000; SameSite=Lax`;
-        window.location.href = "/";
+        // Back to the page that sent you here. Same-site paths only, so the
+        // link can't bounce someone off to another site after they sign in.
+        const next = new URLSearchParams(window.location.search).get("next") || "";
+        window.location.href = /^\/(?![\/\\])/.test(next) ? next : "/";
       } catch (err) {
         showError(err.message);
         btn.disabled = false;

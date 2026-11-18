@@ -6,6 +6,8 @@ export interface Card {
   credit_limit: number | null;
   is_credit_card: number;
   custom_pattern: string | null;
+  /** Percent added to a foreign-currency spend; null = none. */
+  forex_markup?: number | null;
 }
 
 /**

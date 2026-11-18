@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { processSMSBatch } from '../src/parsers/sms';
-import { extractReference } from '../src/parsers/sms/utils';
+import { extractReference, extractTransactionAmount } from '../src/parsers/sms/utils';
+import { priceInRupees } from '../src/services/exchangeRates';
 import { checkNewMessages } from '../src/services/smsIngest';
 import SharedSMSStore from 'shared-sms-store';
 import { db } from '../src/db/schema';
@@ -44,6 +45,14 @@ jest.mock('shared-sms-store', () => ({
   getIngestStats: jest.fn(),
 }));
 
+// Rates come from the server; tests set them directly.
+let mockRates: Record<string, number> = {};
+jest.mock('../src/services/exchangeRates', () => ({
+  ...jest.requireActual('../src/services/exchangeRates'),
+  getExchangeRates: jest.fn(async () => mockRates),
+  convertPendingForeignAmounts: jest.fn(async () => 0),
+}));
+
 // Credits look payers up in contacts; with access off that step is skipped.
 jest.mock('react-native-contacts', () => ({
   checkPermission: jest.fn(async () => 'denied'),
@@ -56,6 +65,7 @@ describe('SMS Ingestion and Batch Processing', () => {
     mockExecutedQueries.length = 0;
     mockCards = [];
     mockInsertRowsAffected = 1;
+    mockRates = {};
     (Platform as any).OS = 'ios';
   });
 
@@ -227,6 +237,107 @@ describe('SMS Ingestion and Batch Processing', () => {
     );
     expect(logInsert).toBeDefined();
     expect(logInsert!.params[5]).toBe('unparsed');
+  });
+
+  it('does not treat a card-due reminder as a transaction, but still logs it', async () => {
+    await processSMSBatch([
+      {
+        id: 'msg-due',
+        sender: 'AX-ICICIT',
+        body: 'Total Amount of INR 36,483.00 is due on ICICI Bank Credit Card XX5008. Amount will be debited from Savings Account XX577 on 10-Nov-26. Please ignore if paid.',
+        receivedAt: '2026-11-08T10:00:00.000Z',
+      },
+    ]);
+
+    const txnInsert = mockExecutedQueries.find(e =>
+      e.query.includes('INSERT OR IGNORE INTO transactions')
+    );
+    expect(txnInsert).toBeUndefined();
+
+    const logInsert = mockExecutedQueries.find(e =>
+      e.query.includes('INSERT OR IGNORE INTO sms_log')
+    );
+    expect(logInsert).toBeDefined();
+    expect(logInsert!.params[5]).toBe('unparsed');
+  });
+
+  it('still parses a real debit that mentions a later reversal', async () => {
+    await processSMSBatch([
+      {
+        id: 'msg-reversal',
+        sender: 'AX-ICICIT',
+        body: 'ICICI Bank Acct XX577 debited for Rs 500.00 on 12-Nov-26; UPI txn failed. Amount will be credited back within 3 days.',
+        receivedAt: '2026-11-12T10:00:00.000Z',
+      },
+    ]);
+
+    const txnInsert = mockExecutedQueries.find(e =>
+      e.query.includes('INSERT OR IGNORE INTO transactions')
+    );
+    expect(txnInsert).toBeDefined();
+    expect(txnInsert!.params[2]).toBe(500);
+    expect(txnInsert!.params[3]).toBe('debit');
+  });
+
+  const IDFC_USD_SPEND =
+    'Transaction Successful! USD 1.00 spent on your IDFC FIRST Bank Credit Card ending XX2113 at WWW HEROKUCHARGE COM on 29 OCT 2026 at 12:47 PM Avbl Limit: INR 79622.02 If not done by you, call 180010888 for dispute or to block your card SMS CCBLOCK 2113 to 5676732';
+
+  it('reads a foreign-currency spend as that currency, not the available limit', () => {
+    expect(extractTransactionAmount(IDFC_USD_SPEND)).toEqual({ amount: 1, currency: 'USD' });
+    // The rupee figure comes first, so it's what was billed.
+    expect(extractTransactionAmount('INR 8,312.00 (USD 100.00) spent on Card XX1234 at AMAZON')).toEqual({
+      amount: 8312,
+      currency: 'INR',
+    });
+    expect(extractTransactionAmount('Spent Rs. 450.00 at Starbucks. Avl Bal: INR 12,000.00')).toEqual({
+      amount: 450,
+      currency: 'INR',
+    });
+    expect(extractTransactionAmount('EUR1,250.50 spent at HOTEL ROMA')).toEqual({ amount: 1250.5, currency: 'EUR' });
+  });
+
+  it('prices a foreign spend at the rate plus the card markup', () => {
+    expect(priceInRupees(1, 'USD', { USD: 90 }, 3.5)).toEqual({
+      amount: 93.15,
+      original_currency: 'USD',
+      original_amount: 1,
+      fx_rate: 90,
+      fx_markup: 3.5,
+    });
+    expect(priceInRupees(500, 'INR', { USD: 90 }, 3.5).amount).toBe(500);
+    // No rate yet: held at ₹0 until one arrives.
+    expect(priceInRupees(1, 'USD', {}, 3.5)).toMatchObject({ amount: 0, fx_rate: null, original_amount: 1 });
+  });
+
+  it('stores a USD card spend in rupees with the card forex markup', async () => {
+    mockRates = { USD: 90 };
+    mockCards = [
+      { id: 'card_idfc', name: 'IDFC FIRST', bank: 'IDFC FIRST Bank', last4: '2113', credit_limit: 80000, is_credit_card: 1, custom_pattern: null, forex_markup: 3.5 },
+    ];
+
+    await processSMSBatch([
+      { id: 'msg-usd', sender: 'AX-IDFCFB', body: IDFC_USD_SPEND, receivedAt: '2026-10-29T07:17:00.000Z' },
+    ]);
+
+    const txnInsert = mockExecutedQueries.find(e => e.query.includes('INSERT OR IGNORE INTO transactions'));
+    expect(txnInsert).toBeDefined();
+    // [..., card_id(10), location, lat, lng, original_currency(14), original_amount, fx_rate, fx_markup]
+    const params = txnInsert!.params;
+    expect(params[2]).toBe(93.15);
+    expect(params[3]).toBe('debit');
+    expect(params[4]).toBe('WWW HEROKUCHARGE COM');
+    expect(params[10]).toBe('card_idfc');
+    expect(params.slice(14, 18)).toEqual(['USD', 1, 90, 3.5]);
+  });
+
+  it('holds a foreign spend at ₹0 when no exchange rate is known yet', async () => {
+    await processSMSBatch([
+      { id: 'msg-usd-norate', sender: 'AX-IDFCFB', body: IDFC_USD_SPEND, receivedAt: '2026-10-29T07:17:00.000Z' },
+    ]);
+
+    const params = mockExecutedQueries.find(e => e.query.includes('INSERT OR IGNORE INTO transactions'))!.params;
+    expect(params[2]).toBe(0);
+    expect(params.slice(14, 18)).toEqual(['USD', 1, null, 0]);
   });
 
   it('checkNewMessages drains messages from SharedSMSStore on iOS', async () => {

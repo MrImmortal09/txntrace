@@ -161,6 +161,45 @@ CREATE TABLE IF NOT EXISTS card_statements (
 """
 
 
+# A message the user flagged in the app as read wrong, together with what the
+# app read from it, so the parser can be fixed against the bank's real wording.
+# Sent one at a time, only when the user taps Report; nothing else from the
+# phone's SMS log reaches the server. The parsed_* columns are a copy rather
+# than a link to `transactions`, because the phone doesn't back up every
+# transaction and the user may edit or delete the one they reported.
+PARSE_REPORTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS parse_reports (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    transaction_id TEXT,
+    sender TEXT,
+    sms_body TEXT,
+    parsed_bank TEXT,
+    parsed_amount REAL,
+    parsed_type TEXT,
+    parsed_merchant TEXT,
+    parsed_date TEXT,
+    reason TEXT,
+    note TEXT,
+    app_version TEXT,
+    platform TEXT,
+    status TEXT DEFAULT 'open',
+    created_at TEXT
+);
+"""
+
+
+# INR per one unit of a foreign currency, shared by every user. See
+# exchange_rates.py for how and when it's filled.
+EXCHANGE_RATES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    currency TEXT PRIMARY KEY,
+    inr_per_unit REAL,
+    fetched_at TEXT
+);
+"""
+
+
 @contextmanager
 def get_db():
     if not DATABASE_URL:
@@ -186,6 +225,8 @@ def init_db() -> None:
         conn.execute(SETTLEMENTS_SCHEMA)
         conn.execute(REWARD_ENTRIES_SCHEMA)
         conn.execute(CARD_STATEMENTS_SCHEMA)
+        conn.execute(PARSE_REPORTS_SCHEMA)
+        conn.execute(EXCHANGE_RATES_SCHEMA)
         # Added after the initial table, so existing deployments need an
         # explicit migration rather than picking it up from CREATE TABLE IF
         # NOT EXISTS (a no-op once the table already exists). Lets an edit
@@ -231,3 +272,11 @@ def init_db() -> None:
         conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS reward_program TEXT")
         conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS origin TEXT")
         conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reward_tier TEXT")
+        # A spend in another currency: what the message said, and the rate and
+        # card markup the phone converted it at. Set on the phone; stored so a
+        # backup brings the working back, not just the rupee amount.
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS original_currency TEXT")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS original_amount REAL")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fx_rate REAL")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fx_markup REAL")
+        conn.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS forex_markup REAL")

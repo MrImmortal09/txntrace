@@ -1,5 +1,6 @@
 import { db } from '../db/schema';
 import { getSetting, setSetting } from './appSettings';
+import { applyCardForexMarkup } from './exchangeRates';
 import { Card, matchCard } from './cardMatching';
 import {
   buildCardOverview,
@@ -31,6 +32,7 @@ export interface CreditCardInput {
   due_day: number | null;
   reward_preset: string | null;
   program: RewardProgram | null;
+  forex_markup: number | null;
 }
 
 const rowsOf = (res: any): any[] => {
@@ -112,7 +114,7 @@ export const saveCreditCard = async (input: CreditCardInput): Promise<string> =>
   if (input.id) {
     await db.execute(
       `UPDATE cards SET name = ?, bank = ?, last4 = ?, credit_limit = ?, statement_day = ?, due_day = ?,
-         reward_preset = ?, reward_program = ?, is_credit_card = 1
+         reward_preset = ?, reward_program = ?, forex_markup = ?, is_credit_card = 1
        WHERE id = ?`,
       [
         input.name,
@@ -123,18 +125,21 @@ export const saveCreditCard = async (input: CreditCardInput): Promise<string> =>
         input.due_day,
         input.reward_preset,
         programJson,
+        input.forex_markup,
         input.id,
       ]
     );
     await safeRematch(input.id);
+    // After the rematch, so spends it just linked get this card's markup too.
+    await applyCardForexMarkup(input.id, input.forex_markup);
     return input.id;
   }
 
   const id = `card_app_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   await db.execute(
     `INSERT INTO cards (id, name, bank, last4, credit_limit, is_credit_card, custom_pattern, created_at,
-       statement_day, due_day, reward_preset, reward_program, origin)
-     VALUES (?, ?, ?, ?, ?, 1, NULL, ?, ?, ?, ?, ?, 'app')`,
+       statement_day, due_day, reward_preset, reward_program, origin, forex_markup)
+     VALUES (?, ?, ?, ?, ?, 1, NULL, ?, ?, ?, ?, ?, 'app', ?)`,
     [
       id,
       input.name,
@@ -146,9 +151,11 @@ export const saveCreditCard = async (input: CreditCardInput): Promise<string> =>
       input.due_day,
       input.reward_preset,
       programJson,
+      input.forex_markup,
     ]
   );
   await safeRematch();
+  await applyCardForexMarkup(id, input.forex_markup);
   return id;
 };
 
@@ -215,6 +222,10 @@ export const getCardOverview = async (card: CreditCard): Promise<CardOverview | 
 };
 
 /** Pass null to go back to the card's default / keyword-matched tier. */
+/** The whole stored row, for the transaction detail sheet. */
+export const loadTransaction = async (id: string): Promise<any | null> =>
+  rowsOf(await db.execute('SELECT * FROM transactions WHERE id = ?', [id]))[0] ?? null;
+
 export const setTransactionRewardTier = async (txnId: string, tierId: string | null): Promise<void> => {
   // updated_at is deliberately left alone — the tier is phone-only and
   // bumping it would make web sync treat this row as locally edited.
