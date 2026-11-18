@@ -1,11 +1,11 @@
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Depends, Cookie
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -42,6 +42,11 @@ ADMIN_USER_IDS = {
     f"user_{phone.strip()}" for phone in os.environ.get("ADMIN_PHONES", "").split(",") if phone.strip()
 }
 
+# How long a website sign-in lasts. App tokens never expire (the app signs in
+# once), but the website is the admin portal, so its sessions do.
+WEB_SESSION = timedelta(days=7)
+WEB_COOKIE = "txntrace_token"
+
 security = HTTPBearer(auto_error=False)
 
 def get_current_user(
@@ -61,12 +66,17 @@ def get_current_user(
     return user_id
 
 def get_web_user(request: Request) -> str | None:
-    token = request.cookies.get("txntrace_token")
+    token = request.cookies.get(WEB_COOKIE)
     if not token:
         return None
     try:
+        # Rejects an expired session, since web tokens carry exp.
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
     except jwt.InvalidTokenError:
+        return None
+    # Only a website sign-in opens website pages. An app token never expires,
+    # so one copied into a cookie would otherwise be a session that never ends.
+    if not payload.get("web"):
         return None
     user_id = payload.get("user_id")
     return user_id if _account_exists(user_id) else None
@@ -126,7 +136,7 @@ async def request_otp(payload: dict):
     return {"success": True}
 
 @app.post("/api/auth/verify-otp")
-async def verify_otp(payload: dict):
+async def verify_otp(payload: dict, request: Request):
     phone = payload.get("phone")
     otp = payload.get("otp")
     if str(OTP_STORE.get(phone)) != str(otp):
@@ -140,8 +150,34 @@ async def verify_otp(payload: dict):
         conn.execute("INSERT INTO users (id, phone, created_at) VALUES (%s, %s, %s) ON CONFLICT (phone) DO UPDATE SET phone=EXCLUDED.phone", 
                     (f"user_{phone}", phone, datetime.now(timezone.utc).isoformat()))
                     
-    token = jwt.encode({"user_id": f"user_{phone}"}, JWT_SECRET, algorithm="HS256")
-    return {"token": token}
+    if not payload.get("web"):
+        token = jwt.encode({"user_id": f"user_{phone}"}, JWT_SECRET, algorithm="HS256")
+        return {"token": token}
+
+    # The website's sign-in: a token that expires, kept in a cookie the
+    # server sets, so page scripts can't read it.
+    expires = datetime.now(timezone.utc) + WEB_SESSION
+    token = jwt.encode({"user_id": f"user_{phone}", "web": True, "exp": expires}, JWT_SECRET, algorithm="HS256")
+    response = JSONResponse({"signed_in": True})
+    response.set_cookie(
+        WEB_COOKIE,
+        token,
+        max_age=int(WEB_SESSION.total_seconds()),
+        path="/",
+        httponly=True,
+        # Behind Cloudflare and nginx the app itself sees plain http, so go by
+        # what the visitor's browser used. Plain http stays usable for local runs.
+        secure=request.headers.get("x-forwarded-proto", request.url.scheme) == "https",
+        samesite="lax",
+    )
+    return response
+
+
+@app.get("/logout")
+def logout():
+    response = RedirectResponse("/login")
+    response.delete_cookie(WEB_COOKIE, path="/")
+    return response
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):

@@ -8,7 +8,7 @@ A single deployable FastAPI app: it serves both the statement-import web UI and 
 - The mobile app pulls newly-imported transactions and the card registry from here via **Settings → Sync from Web**.
 - Read the parsing problems users report from the app at `/admin/reports`.
 
-**The website is admin-only.** Its pages open only for the phone numbers in `ADMIN_PHONES`; anyone else who signs in gets a page saying the site is for the admin. The JSON API the app uses (sign-in, sync, backup, reports, exchange rates) is unaffected, and `/privacy` stays public.
+**The website is admin-only.** Its pages open only for the phone numbers in `ADMIN_PHONES`; anyone else who signs in gets a page saying the site is for the admin. The JSON API the app uses (sign-in, sync, backup, reports, exchange rates) is unaffected, and `/privacy` stays public. A website sign-in lasts 7 days (`WEB_SESSION` in `app/main.py`); **Sign out** in the nav ends it sooner. App sign-ins don't expire and can't be used to open the website.
 
 Storage is Postgres, meant to be a free [Neon](https://neon.tech) project — no local database to run or back up. Set the connection string as `DB` in `server/.env` (see `server/.env.example`).
 

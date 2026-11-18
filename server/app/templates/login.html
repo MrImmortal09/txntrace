@@ -84,7 +84,8 @@
         const res = await fetch('/api/auth/verify-otp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone, otp })
+          // web: a website session, which expires and is kept in a cookie the server sets.
+          body: JSON.stringify({ phone, otp, web: true })
         });
         
         if (!res.ok) {
@@ -92,8 +93,6 @@
           throw new Error(body.detail || "Invalid OTP");
         }
         
-        const data = await res.json();
-        document.cookie = `txntrace_token=${data.token}; path=/; max-age=31536000; SameSite=Lax`;
         // Back to the page that sent you here, but only on this site. Resolved
         // the way the browser will resolve it, since a pattern check on the raw
         // text misses tricks like "/\t/evil.com", which browsers turn into "//evil.com".

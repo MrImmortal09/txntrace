@@ -13,16 +13,10 @@
       Your account works in the TxnTrace app: backup, restore and sync all happen there.
       There's nothing to manage on this website.
     </p>
-    <button id="sign-out" class="mt-6 rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-700">
+    <a href="/logout" class="mt-6 inline-block rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-700">
       Sign out
-    </button>
+    </a>
     <p class="mt-6 text-xs"><a href="/privacy" class="text-gray-400 hover:text-gray-600">Privacy Policy</a></p>
   </main>
-  <script>
-    document.getElementById('sign-out').addEventListener('click', () => {
-      document.cookie = 'txntrace_token=; path=/; max-age=0; SameSite=Lax';
-      window.location.href = '/login';
-    });
-  </script>
 </body>
 </html>
