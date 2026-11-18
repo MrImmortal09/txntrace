@@ -20,7 +20,10 @@ on:
 jobs:
   build-ios:
     name: Build, Sign & Release iOS
-    runs-on: macos-15
+    # Same runner and Xcode as ios-app-store.yml. macos-15's Xcode 16.2 stopped
+    # building: the image dropped the iOS 18.2 simulator runtime its asset
+    # catalog step needs ("No simulator runtime version ... available").
+    runs-on: macos-26
     permissions:
       contents: write
 
@@ -31,13 +34,7 @@ jobs:
           fetch-depth: 0
 
       - name: Select Xcode Version
-        run: |
-          if [ -d "/Applications/Xcode_16.2.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.2.app
-          elif [ -d "/Applications/Xcode_16.1.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.1.app
-          fi
-          xcodebuild -version
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app && xcodebuild -version
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
